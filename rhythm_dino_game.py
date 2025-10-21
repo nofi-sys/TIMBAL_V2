@@ -398,34 +398,51 @@ class RhythmDinoGame:
         )
 
     def _draw_timeline(self, now: float) -> None:
-        bar_rect = pygame.Rect(80, 40, self.width - 160, 12)
-        pygame.draw.rect(self.screen, (210, 210, 210), bar_rect, border_radius=6)
-        progress_ratio = min(1.0, now / self.timeline.total_duration)
-        progress_width = int(bar_rect.width * progress_ratio)
-        if progress_width > 0:
-            prog_rect = pygame.Rect(bar_rect.x, bar_rect.y, progress_width, bar_rect.height)
-            pygame.draw.rect(self.screen, (120, 120, 255), prog_rect, border_radius=6)
+        # Grilla ritmica movil en el suelo
+        ground_line_y = self.ground_y + 6
 
-        total_beats = self.level.pattern_length_beats
-        next_event = (
-            self.timeline.events[self.timeline.index]
-            if self.timeline.index < len(self.timeline.events)
-            else None
-        )
-        for event in self.timeline.events:
-            beat_ratio = event.beat / total_beats if total_beats else 0.0
-            cx = bar_rect.x + int(bar_rect.width * beat_ratio)
-            cy = bar_rect.y + bar_rect.height // 2
-            color = (80, 80, 80)
-            radius = 6
-            if event.missed:
-                color = (200, 60, 60)
-            elif event.resolved:
-                color = (60, 170, 90)
-            elif event is next_event:
-                color = (240, 200, 60)
-                radius = 8
-            pygame.draw.circle(self.screen, color, (cx, cy), radius)
+        # Calculamos el pulso actual y el desplazamiento
+        seconds_per_beat = 60.0 / self.level.tempo
+        # El tiempo "real" del patron comienza despues del count-in
+        pattern_time = now - (self.level.count_in_beats * seconds_per_beat)
+
+        # Pixels por segundo ya esta en self.level.base_speed
+        # Pixels por pulso = (px/sec) * (sec/pulso)
+        pixels_per_beat = self.level.base_speed * seconds_per_beat
+
+        # Cuantos pulsos han pasado visualmente desde el inicio del juego
+        # El jugador está en self.player.x, esa es la linea de "hit"
+        # El obstaculo aparece en self.spawn_x y viaja hacia el jugador
+        travel_time_to_player = (self.spawn_x - self.player.x) / self.level.base_speed
+
+        # El pulso cero (inicio del patron) debe llegar al jugador en t=travel_time_to_player
+        # En un tiempo `now`, ¿dónde está el pulso cero?
+        # Su tiempo esperado de llegada es `travel_time_to_player`.
+        # El tiempo actual es `pattern_time + travel_time_to_player`.
+        # El desplazamiento es la diferencia de tiempo, convertida a pixeles.
+        time_since_spawn = now - self.timeline.events[0].spawn_time
+
+        # Mejor usemos una referencia móvil: el desplazamiento del mundo
+        world_offset = (pattern_time * self.level.base_speed) % pixels_per_beat
+
+        # Dibujamos la grilla
+        num_beats_visible = int(self.width / pixels_per_beat) + 2
+
+        for i in range(-1, num_beats_visible):
+            # Posicion X del pulso i, relativo al jugador
+            beat_x = self.player.x + (i * pixels_per_beat) - world_offset
+
+            # Dibujar subdivisiones (corcheas)
+            subdiv_x = beat_x + pixels_per_beat / 2
+            if subdiv_x < self.width + 20:
+                 pygame.draw.line(self.screen, (200, 200, 200), (subdiv_x, ground_line_y - 8), (subdiv_x, ground_line_y), 1)
+
+            if beat_x < self.width + 20:
+                pygame.draw.line(self.screen, (150, 150, 150), (beat_x, ground_line_y - 15), (beat_x, ground_line_y), 2)
+
+        # Linea de HIT o "ahora"
+        hit_line_x = self.player.x + self.player.width / 2
+        pygame.draw.line(self.screen, (255, 100, 100, 180), (hit_line_x, self.ground_y - 80), (hit_line_x, self.ground_y), 2)
 
     def _draw_hud(self, now: float) -> None:
         score_text = self.font.render(f"Puntaje: {self.score:05d}", True, (30, 30, 30))
