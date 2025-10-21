@@ -62,9 +62,10 @@ class MainWindow(QMainWindow):
 
     def _setup_midi(self):
         try:
-            # No especificar el nombre crea un puerto virtual que recibe
-            # mensajes de todos los dispositivos, evitando conflictos.
-            self.midi_port = mido.open_input(virtual=True, callback=self._on_midi_message)
+            # Crear un puerto virtual con un nombre específico.
+            # Otros programas pueden enviar mensajes a este puerto.
+            port_name = "TimbalDigitalInput"
+            self.midi_port = mido.open_input(name=port_name, virtual=True, callback=self._on_midi_message)
             print(f"INFO: App principal escuchando en puerto MIDI virtual: {self.midi_port.name}")
         except BaseException as e:
             print(f"WARN: No se pudo abrir el puerto MIDI en la app principal: {e}")
