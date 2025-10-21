@@ -11,7 +11,6 @@ from __future__ import annotations
 import argparse
 import sys
 import time
-import threading
 from dataclasses import dataclass
 from typing import Iterable, Sequence
 
@@ -189,6 +188,7 @@ class TimbalInput:
             self.midi_port = None
 
     def on_midi_message(self, message):
+        print(f"[DEBUG MIDI] Mensaje recibido: {message}")
         if message.type == 'note_on':
             self.pending_hits += 1
 
