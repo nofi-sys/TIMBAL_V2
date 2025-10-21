@@ -15,7 +15,6 @@ from dataclasses import dataclass
 from typing import Iterable, Sequence
 
 import pygame
-import mido
 
 try:
     import serial
@@ -165,32 +164,27 @@ class RhythmTimeline:
 
 
 class TimbalInput:
-    """Aggregate hits from serial, MIDI, and optional keyboard fallback."""
+    """Aggregate hits from stdin, serial, and optional keyboard fallback."""
 
     def __init__(self, port: str | None, baud: int) -> None:
         self.ser = open_serial(port, baud)
         self.pending_hits = 0
-        self.midi_port = None
         self.keyboard_keys = {
             pygame.K_SPACE,
             pygame.K_UP,
             pygame.K_w,
         }
-        try:
-            available_ports = mido.get_input_names()
-            if not available_ports:
-                print("INFO: No se encontraron puertos MIDI de entrada.")
-            else:
-                self.midi_port = mido.open_input(callback=self.on_midi_message)
-                print(f"INFO: Escuchando en puerto MIDI: {self.midi_port.name}")
-        except BaseException as e:
-            print(f"WARN: No se pudo inicializar el subsistema MIDI: {e}")
-            self.midi_port = None
 
-    def on_midi_message(self, message):
-        print(f"[DEBUG MIDI] Mensaje recibido: {message}")
-        if message.type == 'note_on':
-            self.pending_hits += 1
+        # Hilo para leer stdin sin bloquear el juego
+        self.stdin_thread = threading.Thread(target=self._read_stdin, daemon=True)
+        self.stdin_thread.start()
+
+    def _read_stdin(self):
+        """Lee líneas de stdin y las cuenta como golpes."""
+        print("INFO: DINO_RITMO escuchando golpes desde stdin.")
+        for line in sys.stdin:
+            if "HIT" in line:
+                self.pending_hits += 1
 
     def handle_pygame_event(self, event) -> None:
         if event.type == pygame.KEYDOWN and event.key in self.keyboard_keys:
@@ -208,11 +202,6 @@ class TimbalInput:
         if self.ser:
             try:
                 self.ser.close()
-            except Exception:
-                pass
-        if self.midi_port:
-            try:
-                self.midi_port.close()
             except Exception:
                 pass
 
