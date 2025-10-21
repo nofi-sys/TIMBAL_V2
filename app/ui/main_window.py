@@ -2,6 +2,7 @@
 import subprocess
 from pathlib import Path
 
+import mido
 from PyQt5.QtWidgets import QApplication, QMainWindow, QFileDialog, QMessageBox, QAction
 from PyQt5.QtCore import Qt, QCoreApplication
 
@@ -52,8 +53,46 @@ class MainWindow(QMainWindow):
         self.pads_page = PadsPage(engine, config)
         self.setCentralWidget(self.pads_page)
 
+        self.dino_process = None
+        self.midi_port = None
+        self._setup_midi()
+
         self._build_menu()
         self.statusBar().hide()
+
+    def _setup_midi(self):
+        try:
+            ports = mido.get_input_names()
+            if not ports:
+                print("INFO: No se encontraron puertos MIDI para la app principal.")
+                return
+
+            # Asumimos que el Arduino/Timbal es el primer puerto disponible
+            self.midi_port = mido.open_input(ports[0], callback=self._on_midi_message)
+            print(f"INFO: App principal escuchando MIDI en: {self.midi_port.name}")
+        except BaseException as e:
+            print(f"WARN: No se pudo abrir el puerto MIDI en la app principal: {e}")
+
+    def _on_midi_message(self, message):
+        # Primero, disparamos el sonido en la app principal
+        if message.type == 'note_on':
+            self.engine.disparar(message)
+
+        # Luego, si el juego está abierto, le enviamos el golpe
+        if self.dino_process and self.dino_process.poll() is None:
+            if message.type == 'note_on':
+                try:
+                    self.dino_process.stdin.write("HIT\n")
+                    self.dino_process.stdin.flush()
+                except Exception as e:
+                    print(f"ERROR: No se pudo comunicar con DINO_RITMO: {e}")
+
+    def closeEvent(self, event):
+        if self.midi_port:
+            self.midi_port.close()
+        if self.dino_process:
+            self.dino_process.kill()
+        event.accept()
 
     def _build_menu(self) -> None:
         menu_config = self.menuBar().addMenu('Configuracion')
@@ -67,9 +106,18 @@ class MainWindow(QMainWindow):
         menu_games.addAction(act_dino)
 
     def _launch_dino_ritmo(self):
+        if self.dino_process and self.dino_process.poll() is None:
+            QMessageBox.information(self, "DINO RITMO", "El juego ya está abierto.")
+            return
         try:
-            # sys.executable es el interprete de python que esta corriendo la app
-            subprocess.Popen([sys.executable, "rhythm_dino_game.py"])
+            self.dino_process = subprocess.Popen(
+                [sys.executable, "rhythm_dino_game.py"],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE, # Opcional: para ver la salida del juego
+                stderr=subprocess.PIPE, # Opcional: para ver los errores del juego
+                text=True,
+                bufsize=1
+            )
         except Exception as e:
             QMessageBox.critical(self, "Error", f"No se pudo iniciar DINO RITMO:\n{e}")
 
