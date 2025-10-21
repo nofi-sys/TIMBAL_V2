@@ -1,4 +1,5 @@
 ﻿import os, sys
+import subprocess
 from pathlib import Path
 
 from PyQt5.QtWidgets import QApplication, QMainWindow, QFileDialog, QMessageBox, QAction
@@ -55,10 +56,22 @@ class MainWindow(QMainWindow):
         self.statusBar().hide()
 
     def _build_menu(self) -> None:
-        menu = self.menuBar().addMenu('Configuracion')
+        menu_config = self.menuBar().addMenu('Configuracion')
         act_change_sf2 = QAction('Cambiar SoundFont...', self)
         act_change_sf2.triggered.connect(self._change_soundfont)
-        menu.addAction(act_change_sf2)
+        menu_config.addAction(act_change_sf2)
+
+        menu_games = self.menuBar().addMenu('Juegos')
+        act_dino = QAction('Iniciar DINO RITMO', self)
+        act_dino.triggered.connect(self._launch_dino_ritmo)
+        menu_games.addAction(act_dino)
+
+    def _launch_dino_ritmo(self):
+        try:
+            # sys.executable es el interprete de python que esta corriendo la app
+            subprocess.Popen([sys.executable, "rhythm_dino_game.py"])
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"No se pudo iniciar DINO RITMO:\n{e}")
 
     def _change_soundfont(self) -> None:
         start = Path(self.config.get('last_sf2', '.'))
