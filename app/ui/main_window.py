@@ -62,14 +62,10 @@ class MainWindow(QMainWindow):
 
     def _setup_midi(self):
         try:
-            ports = mido.get_input_names()
-            if not ports:
-                print("INFO: No se encontraron puertos MIDI para la app principal.")
-                return
-
-            # Asumimos que el Arduino/Timbal es el primer puerto disponible
-            self.midi_port = mido.open_input(ports[0], callback=self._on_midi_message)
-            print(f"INFO: App principal escuchando MIDI en: {self.midi_port.name}")
+            # No especificar el nombre crea un puerto virtual que recibe
+            # mensajes de todos los dispositivos, evitando conflictos.
+            self.midi_port = mido.open_input(virtual=True, callback=self._on_midi_message)
+            print(f"INFO: App principal escuchando en puerto MIDI virtual: {self.midi_port.name}")
         except BaseException as e:
             print(f"WARN: No se pudo abrir el puerto MIDI en la app principal: {e}")
 
