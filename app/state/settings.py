@@ -30,3 +30,14 @@ def save_config(cfg: dict) -> None:
         CONFIG_PATH.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding='utf-8')
     except Exception:
         print('Aviso: no pude guardar la configuración.')
+
+def save_calibration_profile(profile_name: str, settings: dict):
+    config = load_config()
+    if 'calibration_profiles' not in config:
+        config['calibration_profiles'] = {}
+    config['calibration_profiles'][profile_name] = settings
+    save_config(config)
+
+def load_calibration_profiles() -> dict:
+    config = load_config()
+    return config.get('calibration_profiles', {})
