@@ -27,7 +27,7 @@ class EffectsPage(QWidget):
         super().__init__()
         self.audio = engine
         self.config = config if config is not None else load_config()
-        self.min_velocity = 8
+        self.min_velocity = int(self.config.get("min_velocity", 8))
         initial_level = int(round(getattr(self.audio, 'reverb_level', 0.4) * 100))
         self._last_reverb_level_value = initial_level if initial_level > 0 else 40
         self.setObjectName("EffectsPage")
@@ -96,13 +96,20 @@ class EffectsPage(QWidget):
         dyn_layout.addWidget(self.lbl_bright)
         dyn_layout.addWidget(self.sld_bright)
 
-        current_boost = float(getattr(self.audio, 'velocity_gain', 0.0))
-        if current_boost <= 0.0 or abs(current_boost - 3.0) < 1e-6:
-            current_boost = 30.0
+        stored_boost = self.config.get("velocity_gain")
+        if stored_boost is not None:
             try:
-                self.audio.velocity_gain = current_boost
-            except Exception:
-                pass
+                current_boost = float(stored_boost)
+            except (TypeError, ValueError):
+                current_boost = 1.0
+        else:
+            current_boost = float(getattr(self.audio, 'velocity_gain', 0.0))
+            if current_boost <= 0.0:
+                current_boost = 1.0
+        try:
+            self.audio.velocity_gain = current_boost
+        except Exception:
+            pass
         self.lbl_boost = QLabel(f"Boost (vel x): {current_boost:.0f}")
         self.sld_boost = QSlider(Qt.Horizontal)
         self.sld_boost.setRange(0, 50)
@@ -132,6 +139,31 @@ class EffectsPage(QWidget):
         self.sld_gate.valueChanged.connect(self._apply_gate)
         dyn_layout.addWidget(self.lbl_gate)
         dyn_layout.addWidget(self.sld_gate)
+        # Calibración por parche (extra de velocidad por canal 0-4).
+        calib_box = QGroupBox("Calibración parches")
+        calib_layout = QVBoxLayout()
+        self.pad_calib_sliders = []
+        calib_row = QHBoxLayout()
+        calib_row.setSpacing(6)
+        calib_values = self.config.get("pad_calibration", [0, 0, 0, 0, 0])
+        while len(calib_values) < 5:
+            calib_values.append(0)
+        for idx in range(5):
+            col = QVBoxLayout()
+            lbl = QLabel(f"P{idx+1}")
+            lbl.setAlignment(Qt.AlignCenter)
+            sld = QSlider(Qt.Vertical)
+            sld.setRange(0, 40)  # 0 = sin extra, 40 = extra máximo
+            sld.setValue(int(calib_values[idx]))
+            sld.setToolTip("Extra de sensibilidad para este parche")
+            sld.valueChanged.connect(lambda v, i=idx: self._apply_pad_calib(i, v))
+            self.pad_calib_sliders.append(sld)
+            col.addWidget(lbl)
+            col.addWidget(sld)
+            calib_row.addLayout(col)
+        calib_layout.addLayout(calib_row)
+        calib_box.setLayout(calib_layout)
+        dyn_layout.addWidget(calib_box)
 
         dynamics_box.setLayout(dyn_layout)
         layout.addWidget(dynamics_box)
@@ -223,7 +255,13 @@ class EffectsPage(QWidget):
             self.audio.velocity_gain = float(bounded)
         except Exception:
             pass
-        self.lbl_boost.setText(f"Boost (vel x): {getattr(self.audio, 'velocity_gain', bounded):.0f}")
+        boost_val = float(getattr(self.audio, 'velocity_gain', bounded))
+        self.config["velocity_gain"] = boost_val
+        try:
+            save_config(self.config)
+        except Exception:
+            pass
+        self.lbl_boost.setText(f"Boost (vel x): {boost_val:.0f}")
 
     def _apply_master(self, value: int) -> None:
         db = value / 10.0
@@ -233,6 +271,11 @@ class EffectsPage(QWidget):
     def _apply_gate(self, value: int) -> None:
         self.min_velocity = max(0, int(value))
         self.lbl_gate.setText(f"Filtro golpes leves: {self.min_velocity}")
+        self.config["min_velocity"] = self.min_velocity
+        try:
+            save_config(self.config)
+        except Exception:
+            pass
 
     def _sync_reverb_toggle(self, active: bool) -> None:
         self.chk_rev_on.blockSignals(True)
@@ -262,4 +305,21 @@ class EffectsPage(QWidget):
         self.config['last_sf2'] = str(path)
         save_config(self.config)
         self.lbl_sf.setText(self._current_sf_text())
+
+    def _apply_pad_calib(self, idx: int, value: int) -> None:
+        """Guardar calibración de sensibilidad por parche (0..40 → extra)."""
+        try:
+            val = int(value)
+        except (TypeError, ValueError):
+            val = 0
+        val = max(0, min(40, val))
+        calib = list(self.config.get("pad_calibration", [0, 0, 0, 0, 0]))
+        while len(calib) <= idx:
+            calib.append(0)
+        calib[idx] = val
+        self.config["pad_calibration"] = calib
+        try:
+            save_config(self.config)
+        except Exception:
+            pass
 

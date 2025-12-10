@@ -1,4 +1,4 @@
-﻿"""Pads page with legacy note sets, VU meters and optional effects dock."""
+"""Pads page with legacy note sets, VU meters and optional effects dock."""
 from __future__ import annotations
 
 from typing import List
@@ -80,6 +80,7 @@ class PadsPage(QWidget):
         self.pad_buttons: List[QPushButton] = []
         self.prev_labels: List[QLabel] = []
         self.next_labels: List[QLabel] = []
+        self.pad_muted: List[bool] = [False for _ in range(5)]
 
         wrapper = QHBoxLayout(self)
         wrapper.setContentsMargins(0, 0, 0, 0)
@@ -359,6 +360,137 @@ class PadsPage(QWidget):
             )
         except Exception as exc:
             print("hit error:", exc)
+
+    def _pad_note_value(self, pad_idx: int) -> int | None:
+        notes = self._current_notes()
+        if 0 <= pad_idx < len(notes):
+            return to_midi(notes[pad_idx])
+        return None
+
+    def _find_pad_by_midi(self, midi_note: int) -> int | None:
+        try:
+            target = int(midi_note)
+        except Exception:
+            return None
+        notes = self._current_notes()
+        for idx, name in enumerate(notes):
+            try:
+                if to_midi(name) == target:
+                    return idx
+            except Exception:
+                continue
+        return None
+
+    def handle_external_hit(self, *, note: int | None, velocity: int, pad_idx: int | None = None) -> bool:
+        """Reutiliza el mismo flujo de _trigger_pad para golpes externos (MIDI/serial)."""
+        raw_vel = int(max(1, min(127, velocity)))
+
+        # Resolver pad si viene la nota o el índice.
+        if pad_idx is None and note is not None:
+            pad_idx = self._find_pad_by_midi(note)
+        if pad_idx is not None and (pad_idx < 0 or pad_idx >= len(self._current_notes())):
+            print(f"DEBUG: Pad fuera de rango ({pad_idx}); se ignora hit.")
+            pad_idx = None
+
+        # Si el pad está muteado, no disparamos sonido.
+        if pad_idx is not None and pad_idx < len(self.pad_muted) and self.pad_muted[pad_idx]:
+            try:
+                self.vus[pad_idx].actualizar(0)
+            except Exception:
+                pass
+            print(f"DEBUG: Hit bloqueado por mute en pad {pad_idx}")
+            return False
+
+        # Aplicar calibración por parche (extra de sensibilidad).
+        vel = raw_vel
+        if pad_idx is not None:
+            calib = self.config.get("pad_calibration", [0, 0, 0, 0, 0])
+            extra = 0
+            if 0 <= pad_idx < len(calib):
+                try:
+                    extra = int(calib[pad_idx])
+                except (TypeError, ValueError):
+                    extra = 0
+            factor = 1.0 + (extra / 20.0)  # 0..40 → 1.0..3.0
+            vel = int(max(1, min(127, round(vel * factor))))
+
+        gate = int(getattr(self.effects_widget, "min_velocity", 0))
+        if vel < gate:
+            print(f"DEBUG: Hit descartado por gate ({vel} < {gate})")
+            return False
+
+        target_note = None
+        if pad_idx is not None:
+            target_note = self._pad_note_value(pad_idx)
+        elif note is not None:
+            target_note = int(note)
+
+        if target_note is None:
+            print("DEBUG: No se pudo resolver nota destino para el hit externo.")
+            return False
+
+        if pad_idx is not None:
+            try:
+                self.vus[pad_idx].actualizar(vel)
+            except Exception:
+                pass
+
+        try:
+            self.engine.disparar(
+                Message("note_on", note=target_note, velocity=vel, channel=0)
+            )
+            print(f"DEBUG: Hit externo -> pad={pad_idx} note={target_note} vel={vel}")
+            QTimer.singleShot(
+                250,
+                lambda n=target_note: self.engine.disparar(
+                    Message("note_off", note=n, velocity=0, channel=0)
+                ),
+            )
+            return True
+        except Exception as exc:
+            print("hit error ext:", exc)
+            return False
+
+    def handle_mute(self, *, pad_idx: int | None = None, note: int | None = None, state: int = 1) -> bool:
+        """Recibe eventos de mute externos y manda note_off del pad correspondiente."""
+        if pad_idx is None and note is not None:
+            pad_idx = self._find_pad_by_midi(note)
+        if pad_idx is None:
+            if note is None:
+                return False
+            try:
+                n = int(note)
+                self.engine.disparar(Message("note_off", note=n, velocity=0, channel=0))
+                print(f"DEBUG: Mute sin pad -> note_off nota {n}")
+                return True
+            except Exception as exc:
+                print("mute error (fallback):", exc)
+                return False
+        if pad_idx < 0 or pad_idx >= len(self._current_notes()):
+            return False
+
+        muted = bool(state)
+        if pad_idx >= len(self.pad_muted):
+            self.pad_muted = (self.pad_muted + [False] * (pad_idx + 1 - len(self.pad_muted)))
+        self.pad_muted[pad_idx] = muted
+
+        target_note = self._pad_note_value(pad_idx)
+        if target_note is None:
+            return False
+        print(f"DEBUG: Mute pad={pad_idx} state={muted} -> note={target_note}")
+
+        try:
+            self.engine.disparar(
+                Message("note_off", note=target_note, velocity=0, channel=0)
+            )
+            try:
+                self.vus[pad_idx].actualizar(0)
+            except Exception:
+                pass
+            return True
+        except Exception as exc:
+            print("mute error:", exc)
+            return False
 
     def _edit_pad_note(self, pad_idx: int) -> None:
         dialog = NoteSelectorDialog(self)

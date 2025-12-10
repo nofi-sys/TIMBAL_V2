@@ -2,6 +2,8 @@
 import math, time, threading, queue, sys
 from pathlib import Path
 
+from app.paths import ensure_on_path, resource_path
+
 class _DummyFS:
     def start(self, **kw): pass
     def sfload(self, path): return 1
@@ -18,9 +20,12 @@ class _DummyFS:
 import os, sys
 from pathlib import Path
 
-# Forzar PATH para que Windows encuentre las DLLs
-dll_dir = Path(__file__).resolve().parents[2] / "fluidsynth_dlls"
-os.environ["PATH"] = str(dll_dir) + os.pathsep + os.environ["PATH"]
+# Forzar PATH para que Windows encuentre las DLLs tanto en dev como en binario.
+dll_dir = resource_path("fluidsynth_dlls")
+if dll_dir.exists():
+    ensure_on_path(dll_dir)
+else:
+    print(f"[audio] Advertencia: carpeta de DLL FluidSynth no encontrada: {dll_dir}")
 
 try:
     import fluidsynth
@@ -97,13 +102,69 @@ class SoundEngine:
         elif t in ("note_off", "note_on"):
             self.q.put(("off", msg.note, 0))
 
-    def set_reverb_active(self, active: bool): pass
+    def set_reverb_active(self, active: bool):
+        if not self.fs:
+            return
+        try:
+            if active and hasattr(self.fs, "reverb_on"):
+                self.fs.reverb_on()
+            elif not active and hasattr(self.fs, "reverb_off"):
+                self.fs.reverb_off()
+        except Exception:
+            pass
+        st = getattr(self.fs, "settings", None)
+        if st:
+            try:
+                st["synth.reverb.active"] = 1 if active else 0
+            except Exception:
+                try:
+                    st.setint("synth.reverb.active", 1 if active else 0)
+                except Exception:
+                    pass
+
     def set_reverb(self, roomsize=None, level=None, damping=None, width=None):
         if roomsize is not None: self.reverb_roomsize = float(roomsize)
         if level is not None: self.reverb_level = float(level)
         if damping is not None: self.reverb_damping = float(damping)
         if width is not None: self.reverb_width = float(width)
-    def set_reverb_send(self, amount: float, *, remember: bool=True): self.reverb_send = float(amount)
+        fs = self.fs
+        if not fs:
+            return
+        try:
+            if hasattr(fs, "set_reverb"):
+                fs.set_reverb(self.reverb_roomsize, self.reverb_damping, self.reverb_width, self.reverb_level)
+                return
+        except Exception:
+            pass
+        st = getattr(fs, "settings", None)
+        if st is None:
+            return
+        def _set(k, v):
+            try:
+                try:
+                    st[k] = v
+                except Exception:
+                    if isinstance(v, float):
+                        st.setnum(k, float(v))
+                    else:
+                        st.setint(k, int(v))
+            except Exception:
+                pass
+        _set("synth.reverb.room-size", self.reverb_roomsize)
+        _set("synth.reverb.damp", self.reverb_damping)
+        _set("synth.reverb.width", self.reverb_width)
+        _set("synth.reverb.level", self.reverb_level)
+
+    def set_reverb_send(self, amount: float, *, remember: bool=True):
+        self.reverb_send = float(amount)
+        if not self.fs:
+            return
+        try:
+            val = int(max(0, min(127, round(self.reverb_send * 127))))
+            for ch in range(16):
+                self.fs.cc(ch, 91, val)
+        except Exception:
+            pass
     def set_master_gain_db(self, db: float):
         self.master_db = float(db); self.master_linear = 10 ** (self.master_db/20.0)
     def set_limiter_enabled(self, enabled: bool): self.limiter_enabled = bool(enabled)

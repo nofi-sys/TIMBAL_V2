@@ -31,7 +31,9 @@ class SoundEngine:
         self.max_layers = 4
         self.layer_count = 1
         self.gamma = 1.0
-        self.velocity_gain = 3.0
+        # Ganancia de velocidad "plana" por defecto.
+        # El control de Boost de la UI la ajusta a partir de este valor.
+        self.velocity_gain = 1.0
         self.reverb_roomsize = 0.70
         self.reverb_damping = 0.20
         self.reverb_width = 0.90
@@ -44,7 +46,7 @@ class SoundEngine:
         if not sf2.exists():
             raise FileNotFoundError(f"Archivo SF2 no encontrado: {sf2}")
 
-        print(f"ðŸŽµ Cargando SoundFont: {sf2}")
+        print(f"ÃƒÂ°Ã…Â¸Ã…Â½Ã‚Âµ Cargando SoundFont: {sf2}")
 
         threading.Thread(target=self._setup, args=(sf2,), daemon=True).start()
         threading.Thread(target=self._render, daemon=True).start()
@@ -64,7 +66,7 @@ class SoundEngine:
                     self._gen_attenuation = getattr(gen_mod, 'ATTENUATION')
                 except Exception:
                     self._gen_attenuation = None
-            print("âœ… Sintetizador creado")
+            print("ÃƒÂ¢Ã…Â“Ã¢Â€Â¦ Sintetizador creado")
 
             # Probar diferentes drivers
             drivers = ["wasapi", "dsound", "winmm", "alsa", "pulse", "jack"]
@@ -73,22 +75,22 @@ class SoundEngine:
             for drv in drivers:
                 try:
                     self.fs.start(driver=drv)
-                    print(f"âœ… Driver de audio cargado: {drv}")
+                    print(f"ÃƒÂ¢Ã…Â“Ã¢Â€Â¦ Driver de audio cargado: {drv}")
                     driver_loaded = True
                     break
                 except Exception as e:
-                    print(f"âš  Driver {drv} fallÃ³: {e}")
+                    print(f"ÃƒÂ¢Ã…Â¡Ã‚Â  Driver {drv} fallÃƒÂƒÃ‚Â³: {e}")
 
             if not driver_loaded:
-                raise Exception("No se pudo cargar ningÃºn driver de audio")
+                raise Exception("No se pudo cargar ningÃƒÂƒÃ‚Âºn driver de audio")
 
-            # ---- VOLUMEN AL MÃXIMO (compat con versiones viejas) ----
+            # ---- VOLUMEN AL MÃƒÂƒÃ‚Â�XIMO (compat con versiones viejas) ----
             try:
                 # 1) Si existiera set_gain(), usarlo
                 if hasattr(self.fs, "set_gain"):
                     try:
                         self.fs.set_gain(10.0)  # 10.0 = tope de FluidSynth
-                        print("ðŸ”Š Gain por set_gain=10.0")
+                        print("ÃƒÂ°Ã…Â¸Ã¢Â€Â�Ã…Â  Gain por set_gain=10.0")
                     except Exception:
                         pass
 
@@ -98,16 +100,16 @@ class SoundEngine:
                     try:
                         # algunas versiones aceptan interfaz tipo dict
                         st["synth.gain"] = 10.0
-                        print("ðŸ”Š Gain por settings['synth.gain']=10.0")
+                        print("ÃƒÂ°Ã…Â¸Ã¢Â€Â�Ã…Â  Gain por settings['synth.gain']=10.0")
                     except Exception:
                         try:
                             # otras requieren .setnum()
                             st.setnum("synth.gain", 10.0)
-                            print("ðŸ”Š Gain por settings.setnum('synth.gain',10.0)")
+                            print("ÃƒÂ°Ã…Â¸Ã¢Â€Â�Ã…Â  Gain por settings.setnum('synth.gain',10.0)")
                         except Exception:
                             pass
 
-                # 3) SIEMPRE: asegurar volumen/expresiÃ³n MIDI al tope
+                # 3) SIEMPRE: asegurar volumen/expresiÃƒÂƒÃ‚Â³n MIDI al tope
                 for ch in range(16):
                     try:
                         self.fs.cc(ch, 7, 127)  # CC7 Volume
@@ -118,7 +120,7 @@ class SoundEngine:
                 self.set_reverb_send(self.reverb_send, remember=False)
 
             except Exception as _e:
-                print("âš  No se pudo forzar gain por API; quedan CC7/CC11 a 127.")
+                print("ÃƒÂ¢Ã…Â¡Ã‚Â  No se pudo forzar gain por API; quedan CC7/CC11 a 127.")
 
             # Activar reverb predeterminada usando los valores almacenados
             try:
@@ -148,7 +150,7 @@ class SoundEngine:
                     pass
             self.set_reverb_send(self.reverb_send, remember=False)
             self.set_reverb_active(self.reverb_level > 0)
-            print("âœ… SoundFont cargado correctamente")
+            print("ÃƒÂ¢Ã…Â“Ã¢Â€Â¦ SoundFont cargado correctamente")
             with self.lock:
                 self._apply_master_gain_locked()
 
@@ -156,7 +158,7 @@ class SoundEngine:
 
         except Exception as e:
             self.error = str(e)
-            print(f"âŒ Error en setup de audio: {e}")
+            print(f"ÃƒÂ¢Ã‚Â�Ã…Â’ Error en setup de audio: {e}")
 
     def _render(self):
         while True:
@@ -184,7 +186,7 @@ class SoundEngine:
                             pass
 
             except Exception as e:
-                print(f"âš  Error en render: {e}")
+                print(f"ÃƒÂ¢Ã…Â¡Ã‚Â  Error en render: {e}")
 
     def set_master_gain_db(self, db: float):
         try:
@@ -393,7 +395,7 @@ class SoundEngine:
 
     def disparar(self, msg: Message):
         try:
-            if msg.type == "control_change":  # â† NUEVO
+            if msg.type == "control_change":  # ÃƒÂ¢Ã¢Â€Â Ã‚Â� NUEVO
                 self.fs.cc(getattr(msg, "channel", 0), msg.control, msg.value);
                 return
             if msg.type == "note_on" and msg.velocity:
@@ -412,4 +414,4 @@ class SoundEngine:
             elif msg.type in ("note_off", "note_on"):
                 self.q.put(("off", msg.note, 0))
         except Exception as e:
-            print(f"âš  Error disparando nota: {e}")
+            print(f"ÃƒÂ¢Ã…Â¡Ã‚Â  Error disparando nota: {e}")

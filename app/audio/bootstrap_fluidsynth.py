@@ -6,7 +6,9 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Tuple
 
-DLL_DIR = Path(__file__).resolve().parent.parent.parent / 'fluidsynth_dlls'
+from app.paths import ensure_on_path, resource_path
+
+DLL_DIR = resource_path('fluidsynth_dlls')
 POSSIBLE_DLLS = [
     'libfluidsynth-3.dll',
     'libfluidsynth.dll',
@@ -25,19 +27,14 @@ _FLUIDSYNTH_MODULE = None
 
 
 def _ensure_dll_dir() -> Path:
-    if not DLL_DIR.exists():
-        raise FileNotFoundError(f'Expected FluidSynth DLLs under {DLL_DIR}')
-    return DLL_DIR
+    dir_path = resource_path('fluidsynth_dlls')
+    if not dir_path.exists():
+        raise FileNotFoundError(f'Expected FluidSynth DLLs under {dir_path}')
+    return dir_path
 
 
 def _inject_path(dir_path: Path) -> None:
-    current = os.environ.get('PATH', '')
-    if str(dir_path) not in current.split(os.pathsep):
-        os.environ['PATH'] = str(dir_path) + os.pathsep + current
-    try:
-        os.add_dll_directory(str(dir_path))  # type: ignore[attr-defined]
-    except (AttributeError, FileNotFoundError, OSError):
-        pass
+    ensure_on_path(dir_path)
 
 
 def _select_dll(dir_path: Path) -> Path:
