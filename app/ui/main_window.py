@@ -1,51 +1,54 @@
-import os, sys, json, subprocess
+import sys
+import subprocess
 from pathlib import Path
 
-import mido
-from PyQt5.QtWidgets import QApplication, QMainWindow, QFileDialog, QMessageBox, QAction
-from PyQt5.QtCore import Qt, QCoreApplication, QTimer
+from mido import Message
+from PyQt5.QtCore import QTimer
+from PyQt5.QtWidgets import (
+    QMainWindow,
+    QFileDialog,
+    QMessageBox,
+    QAction,
+    QInputDialog,
+)
 
-from app.paths import resource_path
-from app.theme.qss import build_qss
-from app.audio.engine_legacy import SoundEngine
+from app.io.timbal_input import (
+    TimbalHit,
+    TimbalCalibrationState,
+    TimbalInputRouter,
+    TimbalMute,
+    TimbalPadState,
+)
+from app.runtime import build_application, build_audio_engine
 from app.state.settings import load_config, save_config
+from app.ui.calibration_dialog import CalibrationDialog
 from app.ui.pages.pads import PadsPage
 
 
 def run_new_ui():
-    os.environ["QT_AUTO_SCREEN_SCALE_FACTOR"] = "1"
-    QCoreApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
-    QCoreApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
-
-    app = QApplication(sys.argv)
-    app.setStyleSheet(build_qss())
-
+    app = build_application()
     config = load_config()
-    sf2_entry = config.get('last_sf2')
-    resolved = None
-    if sf2_entry:
-        candidate = Path(sf2_entry)
-        if candidate.exists():
-            resolved = candidate
-
-    bundled_sf2 = resource_path("soundonts", "timpani_collections.sf2")
-    if resolved is None and bundled_sf2.exists():
-        resolved = bundled_sf2
-
-    if resolved is None:
-        chosen, _ = QFileDialog.getOpenFileName(None, 'Seleccionar SoundFont', '.', 'SoundFont (*.sf2)')
-        if not chosen:
-            QMessageBox.critical(None, 'Error', 'No seleccionaste ningun SoundFont.')
-            return
-        resolved = Path(chosen)
-        config['last_sf2'] = str(resolved)
-        save_config(config)
-
     try:
-        engine = SoundEngine(resolved)
+        engine, resolved = build_audio_engine(config, allow_prompt=True)
     except Exception as exc:
         QMessageBox.critical(None, "Error", f"No se pudo iniciar el motor de audio\n{exc}")
         return
+
+    config["last_sf2"] = str(resolved)
+    try:
+        bank = int(config.get("sf2_bank", 0))
+    except (TypeError, ValueError):
+        bank = 0
+    try:
+        preset = int(config.get("sf2_preset", 0))
+    except (TypeError, ValueError):
+        preset = 0
+    try:
+        engine.load_sf2_live(resolved, bank=bank, preset=preset)
+    except Exception as exc:
+        print(f"WARN: no se pudo re-aplicar bank/preset al iniciar: {exc}")
+    save_config(config)
+
     win = MainWindow(engine, config)
     win.resize(1400, 820)
     win.show()
@@ -63,216 +66,296 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(self.pads_page)
 
         self.dino_process = None
-        self.midi_port = None
-        self.serial_port = None
-        self.serial_timer = None
-        self._serial_buf = b""
-        self._setup_midi()
-        self._setup_serial()
+        self.calibration_dialog: CalibrationDialog | None = None
+        self.input_router = TimbalInputRouter(self, prefer_midi_hits=False)
+        self.input_router.hit_received.connect(self._on_router_hit)
+        self.input_router.mute_received.connect(self._on_router_mute)
+        self.input_router.pad_state_received.connect(self._on_router_pad_state)
+        self.input_router.calibration_state_received.connect(
+            self._on_router_calibration_state
+        )
+        self.input_router.midi_message_received.connect(self._on_router_midi_message)
+        self.input_router.status_changed.connect(print)
+        self.input_router.start()
 
         self._build_menu()
         self.statusBar().hide()
-
-    def _setup_midi(self):
-        try:
-            # Crear un puerto virtual con un nombre específico.
-            # Otros programas pueden enviar mensajes a este puerto.
-            port_name = "TimbalDigitalInput"
-            self.midi_port = mido.open_input(name=port_name, virtual=True, callback=self._on_midi_message)
-            print(f"INFO: App principal escuchando en puerto MIDI virtual: {self.midi_port.name}")
-        except BaseException as e:
-            print(f"WARN: No se pudo abrir el puerto MIDI virtual: {e}. Probando puertos físicos...")
-            try:
-                inputs = mido.get_input_names()
-                print(f"DEBUG: Puertos MIDI disponibles: {inputs}")
-                if inputs:
-                    name = inputs[0]
-                    self.midi_port = mido.open_input(name, callback=self._on_midi_message)
-                    print(f"INFO: Escuchando MIDI físico: {name}")
-                else:
-                    print("WARN: No hay puertos MIDI disponibles.")
-            except Exception as e2:
-                print(f"WARN: Fallback MIDI físico falló: {e2}")
-
-    def _on_midi_message(self, message):
-        typ = getattr(message, "type", "")
-        note = getattr(message, "note", None)
-        velocity = getattr(message, "velocity", 0)
-        print(f"DEBUG: MIDI msg type={typ} note={note} vel={velocity}")
-        if typ == "note_on" and velocity:
-            handled = False
-            try:
-                handled = self.pads_page.handle_external_hit(note=note, velocity=velocity)
-            except Exception as exc:
-                print(f"WARN: error en hit MIDI -> pads: {exc}")
-            if not handled:
-                try:
-                    self.engine.disparar(message)
-                    print("DEBUG: MIDI note_on enviado directo al engine (sin pad match).")
-                except Exception as exc:
-                    print(f"WARN: error disparando engine: {exc}")
-            self._forward_hit_to_dino()
-        elif typ in ("note_off",) or (typ == "note_on" and velocity == 0):
-            try:
-                self.engine.disparar(message)
-                print("DEBUG: MIDI note_off enviado al engine.")
-            except Exception:
-                pass
+        QTimer.singleShot(1200, self._push_saved_calibration)
 
     def closeEvent(self, event):
-        if self.midi_port:
-            self.midi_port.close()
-        if self.serial_port:
-            try:
-                self.serial_port.close()
-            except Exception:
-                pass
+        self.input_router.close()
         if self.dino_process:
             self.dino_process.kill()
         event.accept()
 
     def _build_menu(self) -> None:
-        menu_config = self.menuBar().addMenu('Configuracion')
-        act_change_sf2 = QAction('Cambiar SoundFont...', self)
+        menu_config = self.menuBar().addMenu("Configuracion")
+        act_change_sf2 = QAction("Cambiar SoundFont...", self)
         act_change_sf2.triggered.connect(self._change_soundfont)
         menu_config.addAction(act_change_sf2)
+        act_program_sf2 = QAction("Preset/Bank SoundFont...", self)
+        act_program_sf2.triggered.connect(self._change_soundfont_program)
+        menu_config.addAction(act_program_sf2)
+        act_calibration = QAction("Calibracion en vivo...", self)
+        act_calibration.triggered.connect(self._open_calibration_dialog)
+        menu_config.addAction(act_calibration)
 
-        menu_games = self.menuBar().addMenu('Juegos')
-        act_dino = QAction('Iniciar DINO RITMO', self)
+        menu_games = self.menuBar().addMenu("Juegos")
+        act_dino = QAction("Iniciar DINO RITMO", self)
         act_dino.triggered.connect(self._launch_dino_ritmo)
         menu_games.addAction(act_dino)
 
+    def _build_child_command(self, mode_flag: str) -> list[str]:
+        if getattr(sys, "frozen", False):
+            return [sys.executable, mode_flag]
+        launcher = str(Path(sys.argv[0]).resolve())
+        return [sys.executable, launcher, mode_flag]
+
     def _launch_dino_ritmo(self):
         if self.dino_process and self.dino_process.poll() is None:
-            QMessageBox.information(self, "DINO RITMO", "El juego ya está abierto.")
+            QMessageBox.information(self, "DINO RITMO", "El juego ya esta abierto.")
             return
         try:
-            launcher = str(Path(sys.argv[0]).resolve())
             self.dino_process = subprocess.Popen(
-                [sys.executable, launcher, "--run-dino"],
+                self._build_child_command("--run-dino"),
                 stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,  # Opcional: para ver la salida del juego
-                stderr=subprocess.PIPE,  # Opcional: para ver los errores del juego
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
                 text=True,
-                bufsize=1
+                bufsize=1,
             )
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"No se pudo iniciar DINO RITMO:\n{e}")
+        except Exception as exc:
+            QMessageBox.critical(self, "Error", f"No se pudo iniciar DINO RITMO:\n{exc}")
 
     def _change_soundfont(self) -> None:
-        start = Path(self.config.get('last_sf2', '.'))
-        directory = start.parent if start.is_file() else Path('.')
-        chosen, _ = QFileDialog.getOpenFileName(self, 'Seleccionar SoundFont', str(directory), 'SoundFont (*.sf2)')
+        start = Path(self.config.get("last_sf2", "."))
+        directory = start.parent if start.is_file() else Path(".")
+        chosen, _ = QFileDialog.getOpenFileName(
+            self,
+            "Seleccionar SoundFont",
+            str(directory),
+            "SoundFont (*.sf2)",
+        )
         if not chosen:
             return
         path = Path(chosen)
         try:
-            self.engine.load_sf2_live(path)
+            self.engine.load_sf2_live(
+                path,
+                bank=self._current_sf2_bank(),
+                preset=self._current_sf2_preset(),
+            )
         except Exception as exc:
-            QMessageBox.critical(self, 'Error', f'No se pudo cambiar el SoundFont\n{exc}')
+            QMessageBox.critical(self, "Error", f"No se pudo cambiar el SoundFont\n{exc}")
             return
-        self.config['last_sf2'] = str(path)
+        self.config["last_sf2"] = str(path)
         save_config(self.config)
-        QMessageBox.information(self, 'SoundFont', f'SoundFont cargado: {path.name}')
+        QMessageBox.information(self, "SoundFont", f"SoundFont cargado: {path.name}")
+
+    def _current_sf2_bank(self) -> int:
+        try:
+            return int(self.config.get("sf2_bank", 0))
+        except (TypeError, ValueError):
+            return 0
+
+    def _current_sf2_preset(self) -> int:
+        try:
+            return int(self.config.get("sf2_preset", 0))
+        except (TypeError, ValueError):
+            return 0
+
+    def _change_soundfont_program(self) -> None:
+        bank, ok = QInputDialog.getInt(
+            self,
+            "Bank SoundFont",
+            "Bank MIDI (0-127):",
+            self._current_sf2_bank(),
+            0,
+            127,
+            1,
+        )
+        if not ok:
+            return
+
+        preset, ok = QInputDialog.getInt(
+            self,
+            "Preset SoundFont",
+            "Preset MIDI (0-127). Timpani GM suele ser 47:",
+            self._current_sf2_preset(),
+            0,
+            127,
+            1,
+        )
+        if not ok:
+            return
+
+        current_sf2 = self.config.get("last_sf2")
+        if not current_sf2:
+            QMessageBox.information(
+                self,
+                "Preset SoundFont",
+                "Primero carga un SoundFont.",
+            )
+            return
+
+        path = Path(current_sf2)
+        try:
+            self.engine.load_sf2_live(path, bank=bank, preset=preset)
+        except Exception as exc:
+            QMessageBox.critical(
+                self,
+                "Error",
+                f"No se pudo aplicar bank/preset al SoundFont\n{exc}",
+            )
+            return
+
+        self.config["sf2_bank"] = int(bank)
+        self.config["sf2_preset"] = int(preset)
+        save_config(self.config)
+        QMessageBox.information(
+            self,
+            "Preset SoundFont",
+            f"Bank {bank}, preset {preset} aplicados a {path.name}",
+        )
 
     def _forward_hit_to_dino(self) -> None:
         if self.dino_process and self.dino_process.poll() is None:
             try:
                 self.dino_process.stdin.write("HIT\n")
                 self.dino_process.stdin.flush()
-            except Exception as e:
-                print(f"ERROR: No se pudo comunicar con DINO_RITMO: {e}")
+            except Exception as exc:
+                print(f"ERROR: No se pudo comunicar con DINO_RITMO: {exc}")
 
-    def _setup_serial(self):
-        try:
-            import serial  # type: ignore
-            import serial.tools.list_ports  # type: ignore
-        except Exception as e:
-            print(f"WARN: pyserial no disponible ({e}); se omite lectura de mute/patch.")
-            return
+    def _on_router_hit(self, hit: TimbalHit) -> None:
+        print(
+            f"DEBUG: {hit.source} HIT pad={hit.pad_idx} "
+            f"note={hit.note} vel={hit.velocity}"
+        )
+        resolved_pad_idx = hit.pad_idx
+        if resolved_pad_idx is None and hit.note is not None:
+            resolved_pad_idx = self.pads_page.find_pad_by_midi(hit.note)
 
+        handled = False
         try:
-            port = None
-            for p in serial.tools.list_ports.comports():
-                if "Arduino" in p.description or "USB-SERIAL" in p.description or "USB Serial" in p.description:
-                    port = p.device
-                    break
-            if not port:
-                print("INFO: No se encontró puerto Arduino para leer HIT/MUTE.")
-                return
-            self.serial_port = serial.Serial(port, 9600, timeout=0)
-            self.serial_timer = QTimer(self)
-            self.serial_timer.setInterval(15)
-            self.serial_timer.timeout.connect(self._poll_serial)
-            self.serial_timer.start()
-            print(f"INFO: Leyendo HIT/MUTE desde {port}")
-        except Exception as e:
-            print(f"WARN: No se pudo abrir serial para HIT/MUTE: {e}")
-            self.serial_port = None
-
-    def _poll_serial(self):
-        if not self.serial_port:
-            return
-        try:
-            waiting = self.serial_port.in_waiting
+            handled = self.pads_page.handle_external_hit(
+                note=hit.note,
+                velocity=hit.velocity,
+                pad_idx=resolved_pad_idx,
+            )
         except Exception as exc:
-            print(f"WARN: Serial desconectado ({exc}), deteniendo lectura.")
-            try:
-                self.serial_port.close()
-            except Exception:
-                pass
-            self.serial_port = None
-            if self.serial_timer:
-                self.serial_timer.stop()
-            return
-        try:
-            if waiting:
-                self._serial_buf += self.serial_port.read(waiting)
-        except Exception:
-            return
-        parts = self._serial_buf.split(b"\n")
-        self._serial_buf = parts[-1]
-        for raw in parts[:-1]:
-            line = raw.decode(errors="ignore").strip()
-            if not line:
-                continue
-            try:
-                data = json.loads(line)
-            except Exception:
-                print(f"DEBUG: Línea serial no JSON: {line}")
-                continue
-            self._process_serial_message(data)
+            print(f"WARN: error en hit externo -> pads: {exc}")
 
-    def _process_serial_message(self, data):
-        if not isinstance(data, dict):
+        if handled:
+            self._forward_hit_to_dino()
             return
-        if "HIT" in data:
-            hit = data.get("HIT", {})
+
+        if resolved_pad_idx is None and hit.note is not None:
             try:
-                pad_idx = int(hit.get("ch", -1))
-            except Exception:
-                pad_idx = None
-            try:
-                vel = int(hit.get("vel", 0))
-            except Exception:
-                vel = 0
-            note = hit.get("note")
-            print(f"DEBUG: Serial HIT ch={pad_idx} vel={vel} note={note}")
-            try:
-                self.pads_page.handle_external_hit(note=note, velocity=vel, pad_idx=pad_idx)
+                self.engine.disparar(
+                    Message(
+                        "note_on",
+                        note=int(hit.note),
+                        velocity=int(hit.velocity),
+                        channel=0,
+                    )
+                )
+                print("DEBUG: note_on externo enviado directo al engine.")
                 self._forward_hit_to_dino()
             except Exception as exc:
-                print(f"WARN: procesando HIT serial: {exc}")
-        if "MUTE" in data:
-            m = data.get("MUTE", {})
+                print(f"WARN: error disparando engine: {exc}")
+
+    def _on_router_mute(self, mute: TimbalMute) -> None:
+        print(
+            f"DEBUG: {mute.source} MUTE pad={mute.pad_idx} "
+            f"state={mute.state} note={mute.note}"
+        )
+        try:
+            self.pads_page.handle_mute(
+                pad_idx=mute.pad_idx,
+                note=mute.note,
+                state=mute.state,
+            )
+        except Exception as exc:
+            print(f"WARN: procesando MUTE externo: {exc}")
+
+    def _on_router_pad_state(self, state: TimbalPadState) -> None:
+        try:
+            self.pads_page.handle_pad_state(
+                pad_idx=state.pad_idx,
+                connected=state.connected,
+                noise=state.noise,
+                value=state.value,
+                peak=state.peak,
+            )
+        except Exception as exc:
+            print(f"WARN: procesando PADSTATE externo: {exc}")
+        if self.calibration_dialog is not None:
+            self.calibration_dialog.update_pad_state(
+                pad_idx=state.pad_idx,
+                connected=state.connected,
+                noise=state.noise,
+                value=state.value,
+                peak=state.peak,
+            )
+
+    def _on_router_calibration_state(self, state: TimbalCalibrationState) -> None:
+        payload = {
+            "min_hit": state.min_hit,
+            "quiet": state.quiet,
+            "presence_noise": state.presence_noise,
+            "refractory": state.refractory,
+            "keep_connected": state.keep_connected,
+        }
+        clean = {k: int(v) for k, v in payload.items() if v is not None}
+        if clean:
+            self.config["firmware_calibration"] = clean
+            save_config(self.config)
+        if self.calibration_dialog is not None:
+            self.calibration_dialog.update_calibration_state(state)
+
+    def _on_router_midi_message(self, message) -> None:
+        typ = getattr(message, "type", "")
+        velocity = getattr(message, "velocity", 0)
+        if typ == "control_change" or typ == "note_off" or (typ == "note_on" and velocity == 0):
             try:
-                pad_idx = int(m.get("ch", -1))
-            except Exception:
-                pad_idx = None
-            state = m.get("state", 1)
-            note = m.get("note")
-            print(f"DEBUG: Serial MUTE ch={pad_idx} state={state} note={note}")
-            try:
-                self.pads_page.handle_mute(pad_idx=pad_idx, note=note, state=state)
+                self.engine.disparar(message)
             except Exception as exc:
-                print(f"WARN: procesando MUTE serial: {exc}")
+                print(f"WARN: error pasando mensaje MIDI al engine: {exc}")
+
+    def _push_saved_calibration(self) -> None:
+        raw = self.config.get("firmware_calibration")
+        if not isinstance(raw, dict):
+            self.input_router.request_calibration_state()
+            return
+        payload = {}
+        for key in ("min_hit", "quiet", "presence_noise", "refractory", "keep_connected"):
+            try:
+                payload[key] = int(raw[key])
+            except Exception:
+                pass
+        if payload:
+            self.input_router.send_calibration_config(payload)
+        self.input_router.request_calibration_state()
+
+    def _open_calibration_dialog(self) -> None:
+        if self.calibration_dialog is None:
+            self.calibration_dialog = CalibrationDialog(
+                self,
+                config=self.config,
+                send_config=self._send_calibration_payload,
+                request_state=self.input_router.request_calibration_state,
+            )
+            self.calibration_dialog.finished.connect(self._clear_calibration_dialog)
+
+        self.calibration_dialog.show()
+        self.calibration_dialog.raise_()
+        self.calibration_dialog.activateWindow()
+        self.input_router.request_calibration_state()
+
+    def _send_calibration_payload(self, payload: dict) -> bool:
+        self.config["firmware_calibration"] = dict(payload)
+        save_config(self.config)
+        return self.input_router.send_calibration_config(payload)
+
+    def _clear_calibration_dialog(self) -> None:
+        self.calibration_dialog = None

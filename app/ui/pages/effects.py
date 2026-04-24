@@ -102,6 +102,8 @@ class EffectsPage(QWidget):
                 current_boost = float(stored_boost)
             except (TypeError, ValueError):
                 current_boost = 1.0
+            if current_boost <= 0.0:
+                current_boost = 1.0
         else:
             current_boost = float(getattr(self.audio, 'velocity_gain', 0.0))
             if current_boost <= 0.0:
@@ -112,7 +114,7 @@ class EffectsPage(QWidget):
             pass
         self.lbl_boost = QLabel(f"Boost (vel x): {current_boost:.0f}")
         self.sld_boost = QSlider(Qt.Horizontal)
-        self.sld_boost.setRange(0, 50)
+        self.sld_boost.setRange(1, 50)
         self.sld_boost.setSingleStep(1)
         self.sld_boost.setValue(int(round(current_boost)))
         self.sld_boost.valueChanged.connect(self._apply_boost)

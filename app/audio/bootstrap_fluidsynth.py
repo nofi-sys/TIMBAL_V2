@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Tuple
@@ -23,6 +24,7 @@ COMMON_DEPS = [
     'libinstpatch-2.dll',
     'sndfile.dll',
 ]
+WINDOWS_COMPAT_DIR = Path(r'C:\tools\fluidsynth\bin')
 _FLUIDSYNTH_MODULE = None
 
 
@@ -35,6 +37,26 @@ def _ensure_dll_dir() -> Path:
 
 def _inject_path(dir_path: Path) -> None:
     ensure_on_path(dir_path)
+
+
+def _ensure_windows_compat_dir(dir_path: Path) -> None:
+    """Work around pyFluidSynth's hard-coded Windows lookup path."""
+    if os.name != 'nt':
+        return
+    try:
+        WINDOWS_COMPAT_DIR.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        return
+
+    for name in POSSIBLE_DLLS + COMMON_DEPS:
+        src = dir_path / name
+        dst = WINDOWS_COMPAT_DIR / name
+        if not src.exists() or dst.exists():
+            continue
+        try:
+            shutil.copy2(src, dst)
+        except OSError:
+            pass
 
 
 def _select_dll(dir_path: Path) -> Path:
@@ -114,6 +136,7 @@ def bootstrap():
 
     dir_path = _ensure_dll_dir()
     _inject_path(dir_path)
+    _ensure_windows_compat_dir(dir_path)
     dll_path = _select_dll(dir_path)
     _report_dependencies(dir_path)
 

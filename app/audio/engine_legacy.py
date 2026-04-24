@@ -1,6 +1,7 @@
 """Legacy SoundEngine ported from the original TIMBAL 2.0 app."""
 from __future__ import annotations
 
+import os
 import math
 import queue
 import threading
@@ -12,6 +13,13 @@ from mido import Message
 from app.audio.bootstrap_fluidsynth import bootstrap
 
 fluidsynth = bootstrap()
+
+
+def _audio_setting(name: str, default: int) -> int:
+    try:
+        return int(os.environ.get(name, default))
+    except (TypeError, ValueError):
+        return default
 
 class SoundEngine:
     def __init__(self, sf2: Path):
@@ -59,7 +67,21 @@ class SoundEngine:
 
     def _setup(self, sf2):
         try:
-            self.fs = fluidsynth.Synth()
+            samplerate = _audio_setting("TIMBAL_FS_SAMPLE_RATE", 48000)
+            period_size = _audio_setting("TIMBAL_FS_PERIOD_SIZE", 64)
+            periods = _audio_setting("TIMBAL_FS_PERIODS", 2)
+            print(
+                f"[audio] Fluidsynth config: samplerate={samplerate} "
+                f"period_size={period_size} periods={periods}"
+            )
+            self.fs = fluidsynth.Synth(
+                gain=0.2,
+                samplerate=samplerate,
+                **{
+                    "audio.period-size": period_size,
+                    "audio.periods": periods,
+                },
+            )
             gen_mod = getattr(fluidsynth, 'generator', None)
             if gen_mod:
                 try:

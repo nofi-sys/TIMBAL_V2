@@ -3,7 +3,8 @@ from pathlib import Path
 
 block_cipher = None
 
-project_root = Path(__file__).parent.resolve()
+spec_file = globals().get("__file__")
+project_root = Path(spec_file).resolve().parent if spec_file else Path.cwd().resolve()
 
 datas = []
 

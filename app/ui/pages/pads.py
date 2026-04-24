@@ -15,6 +15,7 @@ from PyQt5.QtWidgets import (
 )
 from mido import Message
 
+from app.state.settings import save_config
 from app.ui.components.note_selector import NoteSelectorDialog
 from app.ui.pages.effects import EffectsPage
 
@@ -35,6 +36,9 @@ DEFAULT_NOTE_SETS: List[List[str]] = [
     ["G2", "D3", "G3", "B3", "D4"],
 ]
 
+PAD_COUNT = 5
+DEFAULT_PAD_ENABLED: List[bool] = [True for _ in range(PAD_COUNT)]
+
 
 class Vu(QWidget):
     def __init__(self) -> None:
@@ -52,21 +56,43 @@ class Vu(QWidget):
             self.bars.append(bar)
         layout.addStretch(1)
         self.level = 0
+        self._enabled = True
         self.timer = QTimer(self)
         self.timer.setInterval(60)
         self.timer.timeout.connect(self._tick)
         self.timer.start()
 
     def actualizar(self, value: int) -> None:
+        if not self._enabled:
+            self.level = 0
+            return
         self.level = max(self.level, int(value))
 
-    def _tick(self) -> None:
-        self.level = max(0, self.level - 6)
+    def set_enabled(self, enabled: bool) -> None:
+        self._enabled = bool(enabled)
+        if not self._enabled:
+            self.level = 0
+        self._paint()
+
+    def _paint(self) -> None:
+        if not self._enabled:
+            for bar in self.bars:
+                bar.setStyleSheet("background:#111827;")
+            return
+
         active = self.level // 9
         for idx, bar in enumerate(reversed(self.bars)):
             bar.setStyleSheet(
                 "background:#22c55e" if idx < active else "background:#2b3648;"
             )
+
+    def _tick(self) -> None:
+        if not self._enabled:
+            self.level = 0
+            self._paint()
+            return
+        self.level = max(0, self.level - 6)
+        self._paint()
 
 
 class PadsPage(QWidget):
@@ -78,9 +104,20 @@ class PadsPage(QWidget):
         self.note_sets: List[List[str]] = [list(row) for row in DEFAULT_NOTE_SETS]
         self.active_set = 0
         self.pad_buttons: List[QPushButton] = []
+        self.pad_power_buttons: List[QPushButton] = []
+        self.pad_presence_labels: List[QLabel] = []
         self.prev_labels: List[QLabel] = []
         self.next_labels: List[QLabel] = []
-        self.pad_muted: List[bool] = [False for _ in range(5)]
+        self.pad_muted: List[bool] = [False for _ in range(PAD_COUNT)]
+        self.pad_enabled: List[bool] = self._load_pad_enabled()
+        self.pad_connected: List[bool | None] = [None for _ in range(PAD_COUNT)]
+        self.pad_noise: List[int | None] = [None for _ in range(PAD_COUNT)]
+        self.pad_value: List[int | None] = [None for _ in range(PAD_COUNT)]
+        self.pad_peak: List[int | None] = [None for _ in range(PAD_COUNT)]
+
+        if "pad_enabled" not in self.config:
+            self.config["pad_enabled"] = list(self.pad_enabled)
+            self._save_config()
 
         wrapper = QHBoxLayout(self)
         wrapper.setContentsMargins(0, 0, 0, 0)
@@ -130,7 +167,7 @@ class PadsPage(QWidget):
 
         vu_grid = QGridLayout()
         vu_grid.setHorizontalSpacing(18)
-        for idx in range(5):
+        for idx in range(PAD_COUNT):
             vu = Vu()
             vu.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
             vu_grid.addWidget(vu, 0, idx)
@@ -138,10 +175,54 @@ class PadsPage(QWidget):
         self.vus = [vu_grid.itemAt(i).widget() for i in range(vu_grid.count())]
         board_layout.addLayout(vu_grid)
 
+        bulk_row = QHBoxLayout()
+        bulk_row.setContentsMargins(0, 0, 0, 0)
+        bulk_row.setSpacing(12)
+        for label, handler in (
+            ("Todos ON", lambda: self._set_all_pads_enabled(True)),
+            ("Todos OFF", lambda: self._set_all_pads_enabled(False)),
+            ("Solo estables", self._enable_only_stable_pads),
+        ):
+            btn = QPushButton(label)
+            btn.setObjectName("PadGlobalButton")
+            btn.clicked.connect(handler)
+            bulk_row.addWidget(btn)
+        bulk_row.addStretch(1)
+        board_layout.addLayout(bulk_row)
+
+        power_row = QHBoxLayout()
+        power_row.setContentsMargins(0, 0, 0, 2)
+        power_row.setSpacing(20)
+        for idx in range(PAD_COUNT):
+            toggle = QPushButton()
+            toggle.setObjectName("PadPowerButton")
+            toggle.setCheckable(True)
+            toggle.setMinimumHeight(40)
+            toggle.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+            toggle.clicked.connect(
+                lambda checked, pad=idx: self._set_pad_enabled(pad, checked)
+            )
+            power_row.addWidget(toggle)
+            self.pad_power_buttons.append(toggle)
+        board_layout.addLayout(power_row)
+
+        presence_row = QHBoxLayout()
+        presence_row.setContentsMargins(0, 0, 0, 4)
+        presence_row.setSpacing(20)
+        for _ in range(PAD_COUNT):
+            lbl = QLabel()
+            lbl.setObjectName("PadPresenceLabel")
+            lbl.setAlignment(Qt.AlignCenter)
+            lbl.setMinimumHeight(28)
+            lbl.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+            presence_row.addWidget(lbl)
+            self.pad_presence_labels.append(lbl)
+        board_layout.addLayout(presence_row)
+
         prev_row = QHBoxLayout()
         prev_row.setContentsMargins(0, 8, 0, 6)
         prev_row.setSpacing(14)
-        for _ in range(5):
+        for _ in range(PAD_COUNT):
             lbl = QLabel()
             lbl.setAlignment(Qt.AlignCenter)
             lbl.setMinimumHeight(24)
@@ -154,11 +235,12 @@ class PadsPage(QWidget):
         grid.setContentsMargins(16, 0, 16, 0)
         grid.setHorizontalSpacing(20)
         grid.setVerticalSpacing(10)
-        for idx in range(5):
+        for idx in range(PAD_COUNT):
             btn = QPushButton()
+            btn.setObjectName("PadNoteButton")
             btn.setMinimumSize(150, 88)
             btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-            btn.setToolTip('Click para tocar - clic derecho para cambiar nota')
+            btn.setToolTip("Click para tocar - clic derecho para cambiar nota")
             btn.clicked.connect(lambda _, pad=idx: self._trigger_pad(pad))
             btn.setContextMenuPolicy(Qt.CustomContextMenu)
             btn.customContextMenuRequested.connect(
@@ -172,7 +254,7 @@ class PadsPage(QWidget):
         next_row = QHBoxLayout()
         next_row.setContentsMargins(0, 6, 0, 0)
         next_row.setSpacing(14)
-        for _ in range(5):
+        for _ in range(PAD_COUNT):
             lbl = QLabel()
             lbl.setAlignment(Qt.AlignCenter)
             lbl.setMinimumHeight(24)
@@ -246,7 +328,19 @@ class PadsPage(QWidget):
                 border: 1px solid #1f2937;
                 border-radius: 28px;
             }
-            QWidget#PadBoard QPushButton {
+            QWidget#PadBoard QPushButton#PadGlobalButton {
+                background-color: #111827;
+                color: #cbd5e1;
+                border: 1px solid #334155;
+                border-radius: 12px;
+                padding: 8px 14px;
+                font-size: 13px;
+                font-weight: 700;
+            }
+            QWidget#PadBoard QPushButton#PadGlobalButton:hover {
+                background-color: #1f2937;
+            }
+            QWidget#PadBoard QPushButton#PadNoteButton {
                 background-color: #1f2937;
                 color: #e5e7eb;
                 border: 1px solid #334155;
@@ -255,12 +349,68 @@ class PadsPage(QWidget):
                 font-weight: 700;
                 letter-spacing: 0.6px;
             }
-            QWidget#PadBoard QPushButton:hover {
+            QWidget#PadBoard QPushButton#PadNoteButton[armed="true"]:hover {
                 background-color: #3b82f6;
                 border-color: #60a5fa;
             }
-            QWidget#PadBoard QPushButton:pressed {
+            QWidget#PadBoard QPushButton#PadNoteButton[armed="true"]:pressed {
                 background-color: #1d4ed8;
+            }
+            QWidget#PadBoard QPushButton#PadNoteButton[armed="false"] {
+                background-color: #111827;
+                color: #64748b;
+                border-color: #1f2937;
+            }
+            QWidget#PadBoard QPushButton#PadNoteButton[armed="false"]:hover {
+                background-color: #111827;
+                border-color: #1f2937;
+            }
+            QWidget#PadBoard QPushButton#PadPowerButton {
+                border-radius: 13px;
+                font-size: 14px;
+                font-weight: 700;
+                padding: 8px 10px;
+                letter-spacing: 0.5px;
+            }
+            QWidget#PadBoard QPushButton#PadPowerButton[armed="true"] {
+                background-color: #14532d;
+                color: #ecfdf5;
+                border: 1px solid #22c55e;
+            }
+            QWidget#PadBoard QPushButton#PadPowerButton[armed="true"]:hover {
+                background-color: #166534;
+            }
+            QWidget#PadBoard QPushButton#PadPowerButton[armed="false"] {
+                background-color: #3f1d1d;
+                color: #fecaca;
+                border: 1px solid #991b1b;
+            }
+            QWidget#PadBoard QPushButton#PadPowerButton[armed="false"]:hover {
+                background-color: #4c1d1d;
+            }
+            QWidget#PadBoard QLabel#PadPresenceLabel {
+                background-color: #111827;
+                border: 1px solid #1f2937;
+                border-radius: 10px;
+                color: #94a3b8;
+                font-size: 12px;
+                font-weight: 700;
+                padding: 4px 6px;
+            }
+            QWidget#PadBoard QLabel#PadPresenceLabel[state="connected"] {
+                color: #bbf7d0;
+                border-color: #166534;
+                background-color: #052e16;
+            }
+            QWidget#PadBoard QLabel#PadPresenceLabel[state="disconnected"] {
+                color: #fecaca;
+                border-color: #7f1d1d;
+                background-color: #2f1212;
+            }
+            QWidget#PadBoard QLabel#PadPresenceLabel[state="unknown"] {
+                color: #cbd5e1;
+                border-color: #334155;
+                background-color: #111827;
             }
             QLabel#SetGhostPrev, QLabel#SetGhostNext {
                 background-color: #111827;
@@ -302,24 +452,191 @@ class PadsPage(QWidget):
     def _set_effects_visible(self, expanded: bool, *, init: bool = False) -> None:
         self.effects_container.setVisible(expanded)
         if expanded:
-            self.effects_toggle.setText("◀ Efectos")
+            self.effects_toggle.setText(f"{chr(0x25C0)} Efectos")
             self.effects_holder.setMinimumWidth(280)
             self.effects_holder.setMaximumWidth(360)
         else:
-            self.effects_toggle.setText("▶ Efectos")
+            self.effects_toggle.setText(f"{chr(0x25B6)} Efectos")
             width = max(72, self.effects_toggle.sizeHint().width() + 16)
             self.effects_holder.setMinimumWidth(width)
             self.effects_holder.setMaximumWidth(width)
         if not init:
             self.config[self._config_key] = not expanded
-            try:
-                from app.state.settings import save_config
-                save_config(self.config)
-            except Exception:
-                pass
+            self._save_config()
 
     def _handle_effects_toggle(self, checked: bool) -> None:
         self._set_effects_visible(checked)
+
+    def _power_icon(self) -> str:
+        return chr(0x23FB)
+
+    def _save_config(self) -> None:
+        try:
+            save_config(self.config)
+        except Exception:
+            pass
+
+    def _load_pad_enabled(self) -> List[bool]:
+        values = self.config.get("pad_enabled")
+        if not isinstance(values, list):
+            return list(DEFAULT_PAD_ENABLED)
+
+        normalized: List[bool] = []
+        for idx in range(PAD_COUNT):
+            raw = values[idx] if idx < len(values) else True
+            if isinstance(raw, str):
+                enabled = raw.strip().lower() in ("1", "true", "on", "yes", "si")
+            else:
+                enabled = bool(raw)
+            normalized.append(enabled)
+        return normalized
+
+    def _presence_state_name(self, pad_idx: int) -> str:
+        connected = self.pad_connected[pad_idx]
+        if connected is True:
+            return "connected"
+        if connected is False:
+            return "disconnected"
+        return "unknown"
+
+    def _presence_text(self, pad_idx: int) -> str:
+        connected = self.pad_connected[pad_idx]
+        noise = self.pad_noise[pad_idx]
+        if connected is True:
+            return f"Estable n={noise}" if noise is not None else "Estable"
+        if connected is False:
+            return f"Flotante n={noise}" if noise is not None else "Flotante"
+        return "Sin datos"
+
+    def _is_pad_enabled(self, pad_idx: int) -> bool:
+        return 0 <= pad_idx < len(self.pad_enabled) and self.pad_enabled[pad_idx]
+
+    def _is_pad_active(self, pad_idx: int) -> bool:
+        if not self._is_pad_enabled(pad_idx):
+            return False
+        connected = self.pad_connected[pad_idx]
+        return connected is not False
+
+    def _restyle(self, widget: QWidget) -> None:
+        style = widget.style()
+        if style is None:
+            return
+        style.unpolish(widget)
+        style.polish(widget)
+        widget.update()
+
+    def _sync_pad_visual_state(self, pad_idx: int) -> None:
+        enabled = self._is_pad_enabled(pad_idx)
+        active = self._is_pad_active(pad_idx)
+        presence_state = self._presence_state_name(pad_idx)
+
+        if pad_idx < len(self.pad_buttons):
+            note_button = self.pad_buttons[pad_idx]
+            note_button.setProperty("armed", active)
+            if not enabled:
+                note_button.setToolTip(
+                    "Pad apagado manualmente: no dispara ni acepta golpes externos"
+                )
+            elif presence_state == "disconnected":
+                note_button.setToolTip(
+                    "Entrada inestable o sin cable: firmware bloqueando este pad"
+                )
+            else:
+                note_button.setToolTip("Click para tocar - clic derecho para cambiar nota")
+            self._restyle(note_button)
+
+        if pad_idx < len(self.pad_power_buttons):
+            power_button = self.pad_power_buttons[pad_idx]
+            power_button.blockSignals(True)
+            power_button.setChecked(enabled)
+            power_button.setProperty("armed", enabled)
+            power_button.setText(
+                f"{self._power_icon()} P{pad_idx + 1} {'ON' if enabled else 'OFF'}"
+            )
+            if not enabled:
+                power_button.setToolTip("Pad apagado manualmente")
+            elif presence_state == "connected":
+                power_button.setToolTip("Pad activo y con entrada estable")
+            elif presence_state == "disconnected":
+                power_button.setToolTip(
+                    "Pad manualmente ON, pero bloqueado por entrada flotante"
+                )
+            else:
+                power_button.setToolTip(
+                    "Pad manual. Con el firmware nuevo vas a ver el estado real abajo"
+                )
+            power_button.blockSignals(False)
+            self._restyle(power_button)
+
+        if pad_idx < len(self.pad_presence_labels):
+            lbl = self.pad_presence_labels[pad_idx]
+            lbl.setProperty("state", presence_state)
+            lbl.setText(self._presence_text(pad_idx))
+            value = self.pad_value[pad_idx]
+            peak = self.pad_peak[pad_idx]
+            noise = self.pad_noise[pad_idx]
+            tooltip = f"Estado: {self._presence_text(pad_idx)}"
+            if value is not None:
+                tooltip += f" | valor={value}"
+            if peak is not None:
+                tooltip += f" | pico={peak}"
+            if noise is not None:
+                tooltip += f" | ruido={noise}"
+            lbl.setToolTip(tooltip)
+            self._restyle(lbl)
+
+        if pad_idx < len(self.vus):
+            self.vus[pad_idx].set_enabled(active)
+
+    def _set_pad_enabled(
+        self,
+        pad_idx: int,
+        enabled: bool,
+        *,
+        persist: bool = True,
+    ) -> None:
+        if pad_idx < 0 or pad_idx >= PAD_COUNT:
+            return
+
+        enabled = bool(enabled)
+        if pad_idx >= len(self.pad_enabled):
+            self.pad_enabled.extend([True] * (pad_idx + 1 - len(self.pad_enabled)))
+
+        self.pad_enabled[pad_idx] = enabled
+        self.config["pad_enabled"] = list(self.pad_enabled)
+
+        if not self._is_pad_active(pad_idx):
+            target_note = self._pad_note_value(pad_idx)
+            if target_note is not None:
+                try:
+                    self.engine.disparar(
+                        Message("note_off", note=target_note, velocity=0, channel=0)
+                    )
+                except Exception:
+                    pass
+            try:
+                self.vus[pad_idx].actualizar(0)
+            except Exception:
+                pass
+
+        print(f"DEBUG: Pad {pad_idx} {'habilitado' if enabled else 'apagado'}")
+        self._sync_pad_visual_state(pad_idx)
+        if persist:
+            self._save_config()
+
+    def _set_all_pads_enabled(self, enabled: bool) -> None:
+        for pad_idx in range(PAD_COUNT):
+            self._set_pad_enabled(pad_idx, enabled, persist=False)
+        self._save_config()
+
+    def _enable_only_stable_pads(self) -> None:
+        for pad_idx in range(PAD_COUNT):
+            self._set_pad_enabled(
+                pad_idx,
+                self.pad_connected[pad_idx] is True,
+                persist=False,
+            )
+        self._save_config()
 
     def _current_notes(self) -> List[str]:
         return self.note_sets[self.active_set]
@@ -338,24 +655,30 @@ class PadsPage(QWidget):
             lbl.setText(self.note_sets[next_index][idx])
 
         self.set_label.setText(f"{self.active_set + 1}/{len(self.note_sets)}")
+        for pad_idx in range(PAD_COUNT):
+            self._sync_pad_visual_state(pad_idx)
 
     def _change_set(self, delta: int) -> None:
         self.active_set = (self.active_set + delta) % len(self.note_sets)
         self._refresh_ui()
 
     def _trigger_pad(self, pad_idx: int) -> None:
+        if not self._is_pad_active(pad_idx):
+            print(f"DEBUG: Click ignorado; pad {pad_idx} no esta activo.")
+            return
+
         note_name = self._current_notes()[pad_idx]
         midi_note = to_midi(note_name)
         velocity = 110
         self.vus[pad_idx].actualizar(velocity)
         try:
             self.engine.disparar(
-                Message('note_on', note=midi_note, velocity=velocity, channel=0)
+                Message("note_on", note=midi_note, velocity=velocity, channel=0)
             )
             QTimer.singleShot(
                 250,
                 lambda n=midi_note: self.engine.disparar(
-                    Message('note_off', note=n, velocity=0, channel=0)
+                    Message("note_off", note=n, velocity=0, channel=0)
                 ),
             )
         except Exception as exc:
@@ -381,18 +704,66 @@ class PadsPage(QWidget):
                 continue
         return None
 
-    def handle_external_hit(self, *, note: int | None, velocity: int, pad_idx: int | None = None) -> bool:
-        """Reutiliza el mismo flujo de _trigger_pad para golpes externos (MIDI/serial)."""
+    def find_pad_by_midi(self, midi_note: int) -> int | None:
+        return self._find_pad_by_midi(midi_note)
+
+    def handle_pad_state(
+        self,
+        *,
+        pad_idx: int,
+        connected: bool | None,
+        noise: int | None = None,
+        value: int | None = None,
+        peak: int | None = None,
+    ) -> None:
+        if pad_idx < 0 or pad_idx >= PAD_COUNT:
+            return
+
+        self.pad_connected[pad_idx] = connected
+        self.pad_noise[pad_idx] = noise
+        self.pad_value[pad_idx] = value
+        self.pad_peak[pad_idx] = peak
+
+        if not self._is_pad_active(pad_idx):
+            target_note = self._pad_note_value(pad_idx)
+            if target_note is not None:
+                try:
+                    self.engine.disparar(
+                        Message("note_off", note=target_note, velocity=0, channel=0)
+                    )
+                except Exception:
+                    pass
+            try:
+                self.vus[pad_idx].actualizar(0)
+            except Exception:
+                pass
+
+        self._sync_pad_visual_state(pad_idx)
+
+    def handle_external_hit(
+        self,
+        *,
+        note: int | None,
+        velocity: int,
+        pad_idx: int | None = None,
+    ) -> bool:
+        """Reutiliza el mismo flujo de _trigger_pad para golpes externos."""
         raw_vel = int(max(1, min(127, velocity)))
 
-        # Resolver pad si viene la nota o el índice.
         if pad_idx is None and note is not None:
             pad_idx = self._find_pad_by_midi(note)
         if pad_idx is not None and (pad_idx < 0 or pad_idx >= len(self._current_notes())):
             print(f"DEBUG: Pad fuera de rango ({pad_idx}); se ignora hit.")
             pad_idx = None
 
-        # Si el pad está muteado, no disparamos sonido.
+        if pad_idx is not None and not self._is_pad_active(pad_idx):
+            try:
+                self.vus[pad_idx].actualizar(0)
+            except Exception:
+                pass
+            print(f"DEBUG: Hit bloqueado; pad {pad_idx} no esta activo.")
+            return False
+
         if pad_idx is not None and pad_idx < len(self.pad_muted) and self.pad_muted[pad_idx]:
             try:
                 self.vus[pad_idx].actualizar(0)
@@ -401,7 +772,6 @@ class PadsPage(QWidget):
             print(f"DEBUG: Hit bloqueado por mute en pad {pad_idx}")
             return False
 
-        # Aplicar calibración por parche (extra de sensibilidad).
         vel = raw_vel
         if pad_idx is not None:
             calib = self.config.get("pad_calibration", [0, 0, 0, 0, 0])
@@ -411,7 +781,7 @@ class PadsPage(QWidget):
                     extra = int(calib[pad_idx])
                 except (TypeError, ValueError):
                     extra = 0
-            factor = 1.0 + (extra / 20.0)  # 0..40 → 1.0..3.0
+            factor = 1.0 + (extra / 20.0)
             vel = int(max(1, min(127, round(vel * factor))))
 
         gate = int(getattr(self.effects_widget, "min_velocity", 0))
@@ -451,7 +821,13 @@ class PadsPage(QWidget):
             print("hit error ext:", exc)
             return False
 
-    def handle_mute(self, *, pad_idx: int | None = None, note: int | None = None, state: int = 1) -> bool:
+    def handle_mute(
+        self,
+        *,
+        pad_idx: int | None = None,
+        note: int | None = None,
+        state: int = 1,
+    ) -> bool:
         """Recibe eventos de mute externos y manda note_off del pad correspondiente."""
         if pad_idx is None and note is not None:
             pad_idx = self._find_pad_by_midi(note)
@@ -459,9 +835,11 @@ class PadsPage(QWidget):
             if note is None:
                 return False
             try:
-                n = int(note)
-                self.engine.disparar(Message("note_off", note=n, velocity=0, channel=0))
-                print(f"DEBUG: Mute sin pad -> note_off nota {n}")
+                resolved_note = int(note)
+                self.engine.disparar(
+                    Message("note_off", note=resolved_note, velocity=0, channel=0)
+                )
+                print(f"DEBUG: Mute sin pad -> note_off nota {resolved_note}")
                 return True
             except Exception as exc:
                 print("mute error (fallback):", exc)
@@ -471,7 +849,9 @@ class PadsPage(QWidget):
 
         muted = bool(state)
         if pad_idx >= len(self.pad_muted):
-            self.pad_muted = (self.pad_muted + [False] * (pad_idx + 1 - len(self.pad_muted)))
+            self.pad_muted = self.pad_muted + [False] * (
+                pad_idx + 1 - len(self.pad_muted)
+            )
         self.pad_muted[pad_idx] = muted
 
         target_note = self._pad_note_value(pad_idx)

@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 """Compatibilidad con la UI legacy: delega en la nueva ventana."""
 
 from app.ui.main_window import run_new_ui

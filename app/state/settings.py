@@ -13,7 +13,19 @@ def _app_config_dir() -> Path:
     return directory
 
 
-CONFIG_PATH = _app_config_dir() / 'config.json'
+def _resolve_config_path() -> Path:
+    override = os.environ.get('TIMBAL_CONFIG_PATH')
+    if override:
+        try:
+            path = Path(override).expanduser()
+            path.parent.mkdir(parents=True, exist_ok=True)
+            return path
+        except Exception:
+            pass
+    return _app_config_dir() / 'config.json'
+
+
+CONFIG_PATH = _resolve_config_path()
 
 
 def load_config() -> dict:
