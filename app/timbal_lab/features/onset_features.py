@@ -52,15 +52,26 @@ def extract_features(session: SessionData) -> list[dict[str, object]]:
             continue
 
         baseline = _estimate_baseline(window_samples, hit.device_us)
-        relative_series = [
-            (sample.device_us - hit.device_us, max(0.0, float(sample.value) - baseline))
+        signed_series = [
+            (sample.device_us - hit.device_us, float(sample.value) - baseline)
             for sample in window_samples
+        ]
+        relative_series = [
+            (offset_us, max(0.0, value))
+            for offset_us, value in signed_series
         ]
 
         peak_value, time_to_peak_ms = _peak_and_time(relative_series, 15_000)
+        trough_value, time_to_trough_ms = _trough_and_time(signed_series, 15_000)
+        negative_peak_abs = abs(trough_value)
+        absolute_peak_value = _absolute_peak(signed_series, 15_000)
         initial_slope = _max_slope(relative_series, 2_000)
+        max_abs_slope = _max_abs_slope(signed_series, 2_000)
         area_5ms = _area(relative_series, 5_000)
         area_15ms = _area(relative_series, 15_000)
+        signed_area_15ms = _signed_area(signed_series, 15_000)
+        absolute_area_15ms = _absolute_area(signed_series, 15_000)
+        zero_crossings_15ms = _zero_crossings(signed_series, 15_000)
         attack_area = _area(relative_series, 6_000)
         tail_area = _area_range(relative_series, 6_000, 30_000)
         tail_ratio = 0.0 if attack_area <= 1e-9 else tail_area / attack_area
@@ -78,10 +89,19 @@ def extract_features(session: SessionData) -> list[dict[str, object]]:
                 "host_time_s": float(hit.host_time),
                 "raw_hit_value": int(hit.value),
                 "peak_value": round(peak_value, 6),
+                "trough_value": round(trough_value, 6),
+                "negative_peak_abs": round(negative_peak_abs, 6),
+                "absolute_peak_value": round(absolute_peak_value, 6),
+                "dominant_polarity": _dominant_polarity(peak_value, negative_peak_abs),
                 "initial_slope": round(initial_slope, 6),
+                "max_abs_slope": round(max_abs_slope, 6),
                 "area_5ms": round(area_5ms, 6),
                 "area_15ms": round(area_15ms, 6),
+                "signed_area_15ms": round(signed_area_15ms, 6),
+                "absolute_area_15ms": round(absolute_area_15ms, 6),
                 "time_to_peak_ms": round(time_to_peak_ms, 6),
+                "time_to_trough_ms": round(time_to_trough_ms, 6),
+                "zero_crossings_15ms": int(zero_crossings_15ms),
                 "tail_ratio": round(tail_ratio, 6),
                 "pre_hit_energy": round(pre_hit_energy, 6),
                 "ioi_prev_ms": None if ioi_prev_ms is None else round(ioi_prev_ms, 6),
@@ -110,6 +130,27 @@ def _peak_and_time(relative_series: list[tuple[int, float]], until_us: int) -> t
     return peak_value, offset_us / 1000.0
 
 
+def _trough_and_time(signed_series: list[tuple[int, float]], until_us: int) -> tuple[float, float]:
+    candidates = [
+        (offset_us, value)
+        for offset_us, value in signed_series
+        if 0 <= offset_us <= until_us and value < 0.0
+    ]
+    if not candidates:
+        return 0.0, 0.0
+    offset_us, trough_value = min(candidates, key=lambda item: item[1])
+    return trough_value, offset_us / 1000.0
+
+
+def _absolute_peak(signed_series: list[tuple[int, float]], until_us: int) -> float:
+    candidates = [
+        abs(value)
+        for offset_us, value in signed_series
+        if 0 <= offset_us <= until_us
+    ]
+    return max(candidates) if candidates else 0.0
+
+
 def _max_slope(relative_series: list[tuple[int, float]], until_us: int) -> float:
     best = 0.0
     previous = None
@@ -129,8 +170,87 @@ def _max_slope(relative_series: list[tuple[int, float]], until_us: int) -> float
     return best
 
 
+def _max_abs_slope(signed_series: list[tuple[int, float]], until_us: int) -> float:
+    best = 0.0
+    previous = None
+    for offset_us, value in signed_series:
+        if offset_us < 0:
+            previous = (offset_us, value)
+            continue
+        if offset_us > until_us:
+            break
+        if previous is not None:
+            dt_us = offset_us - previous[0]
+            if dt_us > 0:
+                slope = abs(value - previous[1]) / (dt_us / 1000.0)
+                if slope > best:
+                    best = slope
+        previous = (offset_us, value)
+    return best
+
+
 def _area(relative_series: list[tuple[int, float]], until_us: int) -> float:
     return _area_range(relative_series, 0, until_us)
+
+
+def _signed_area(signed_series: list[tuple[int, float]], until_us: int) -> float:
+    return _signed_or_absolute_area(signed_series, 0, until_us, absolute=False)
+
+
+def _absolute_area(signed_series: list[tuple[int, float]], until_us: int) -> float:
+    return _signed_or_absolute_area(signed_series, 0, until_us, absolute=True)
+
+
+def _signed_or_absolute_area(
+    signed_series: list[tuple[int, float]],
+    start_us: int,
+    end_us: int,
+    *,
+    absolute: bool,
+) -> float:
+    area = 0.0
+    previous = None
+    for offset_us, value in signed_series:
+        if offset_us < start_us:
+            previous = (offset_us, value)
+            continue
+        if offset_us > end_us:
+            break
+        if previous is not None:
+            dt_ms = (offset_us - previous[0]) / 1000.0
+            if dt_ms > 0:
+                sample_value = abs(previous[1]) if absolute else previous[1]
+                area += sample_value * dt_ms
+        previous = (offset_us, value)
+    return area
+
+
+def _zero_crossings(signed_series: list[tuple[int, float]], until_us: int) -> int:
+    crossings = 0
+    previous_sign = 0
+    deadband = 2.0
+    for offset_us, value in signed_series:
+        if offset_us < 0:
+            continue
+        if offset_us > until_us:
+            break
+        sign = 1 if value > deadband else (-1 if value < -deadband else 0)
+        if sign == 0:
+            continue
+        if previous_sign and sign != previous_sign:
+            crossings += 1
+        previous_sign = sign
+    return crossings
+
+
+def _dominant_polarity(positive_peak: float, negative_peak_abs: float) -> str:
+    if positive_peak <= 1e-9 and negative_peak_abs <= 1e-9:
+        return "flat"
+    if positive_peak >= negative_peak_abs * 1.2:
+        return "positive"
+    if negative_peak_abs >= positive_peak * 1.2:
+        return "negative"
+    return "mixed"
 
 
 def _area_range(relative_series: list[tuple[int, float]], start_us: int, end_us: int) -> float:

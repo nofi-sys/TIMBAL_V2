@@ -253,7 +253,7 @@ class HostAnalogWindow(QMainWindow):
         self.refresh_button.setObjectName("SecondaryAction")
         self.refresh_button.clicked.connect(self._restart_reader)
         self.channel_combo = QComboBox()
-        self.channel_combo.addItems(["0", "1", "2", "3"])
+        self.channel_combo.addItems(["0", "1", "2", "3", "4"])
         self.channel_combo.currentIndexChanged.connect(self._on_channel_changed)
         source_grid = QGridLayout()
         source_grid.setHorizontalSpacing(10)
