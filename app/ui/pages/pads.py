@@ -1,7 +1,6 @@
 """Pads page with legacy note sets, VU meters and optional effects dock."""
 from __future__ import annotations
 
-from pathlib import Path
 from typing import List
 
 from PyQt5.QtCore import Qt, QTimer
@@ -51,8 +50,8 @@ class Vu(QWidget):
         self.bars: List[QLabel] = []
         for _ in range(21):
             bar = QLabel()
-            bar.setFixedHeight(15)
-            bar.setStyleSheet(self._bar_style("#2b3648"))
+            bar.setFixedHeight(18)
+            bar.setStyleSheet("background:#2b3648;")
             layout.addWidget(bar)
             self.bars.append(bar)
         layout.addStretch(1)
@@ -78,22 +77,14 @@ class Vu(QWidget):
     def _paint(self) -> None:
         if not self._enabled:
             for bar in self.bars:
-                bar.setStyleSheet(self._bar_style("#111827", border="#1f2937"))
+                bar.setStyleSheet("background:#111827;")
             return
 
         active = self.level // 9
         for idx, bar in enumerate(reversed(self.bars)):
-            if idx < active:
-                bar.setStyleSheet(self._bar_style("#22c55e", border="#166534"))
-            else:
-                bar.setStyleSheet(self._bar_style("#2b3648", border="#334155"))
-
-    def _bar_style(self, color: str, *, border: str = "#334155") -> str:
-        return (
-            f"background: {color};"
-            f"border: 1px solid {border};"
-            "border-radius: 4px;"
-        )
+            bar.setStyleSheet(
+                "background:#22c55e" if idx < active else "background:#2b3648;"
+            )
 
     def _tick(self) -> None:
         if not self._enabled:
@@ -305,11 +296,6 @@ class PadsPage(QWidget):
         self._refresh_ui()
 
     def _apply_styles(self) -> None:
-        art_path = (
-            Path(__file__).resolve().parents[1]
-            / "assets"
-            / "sony_tech_panel.png"
-        ).as_posix()
         self.setStyleSheet(
             """
             QWidget#PadsContent {
@@ -318,13 +304,13 @@ class PadsPage(QWidget):
             QWidget#EffectsHolder {
                 background: #111827;
                 border: 1px solid #1f2937;
-                border-radius: 8px;
+                border-radius: 22px;
             }
             QPushButton#EffectsToggle {
                 background-color: #1f2937;
                 color: #e5e7eb;
                 border: 1px solid #334155;
-                border-radius: 8px;
+                border-radius: 14px;
                 padding: 10px 14px;
                 font-size: 15px;
                 font-weight: 600;
@@ -335,21 +321,18 @@ class PadsPage(QWidget):
             QWidget#EffectsContainer {
                 background-color: #0f172a;
                 border: 1px solid #1f2937;
-                border-radius: 8px;
+                border-radius: 18px;
             }
             QWidget#PadBoard {
                 background-color: #0f172a;
-                background-image: url("__ART_PATH__");
-                background-repeat: no-repeat;
-                background-position: top right;
                 border: 1px solid #1f2937;
-                border-radius: 8px;
+                border-radius: 28px;
             }
             QWidget#PadBoard QPushButton#PadGlobalButton {
                 background-color: #111827;
                 color: #cbd5e1;
                 border: 1px solid #334155;
-                border-radius: 8px;
+                border-radius: 12px;
                 padding: 8px 14px;
                 font-size: 13px;
                 font-weight: 700;
@@ -361,9 +344,10 @@ class PadsPage(QWidget):
                 background-color: #1f2937;
                 color: #e5e7eb;
                 border: 1px solid #334155;
-                border-radius: 8px;
+                border-radius: 16px;
                 font-size: 20px;
                 font-weight: 700;
+                letter-spacing: 0.6px;
             }
             QWidget#PadBoard QPushButton#PadNoteButton[armed="true"]:hover {
                 background-color: #3b82f6;
@@ -382,10 +366,11 @@ class PadsPage(QWidget):
                 border-color: #1f2937;
             }
             QWidget#PadBoard QPushButton#PadPowerButton {
-                border-radius: 8px;
+                border-radius: 13px;
                 font-size: 14px;
                 font-weight: 700;
                 padding: 8px 10px;
+                letter-spacing: 0.5px;
             }
             QWidget#PadBoard QPushButton#PadPowerButton[armed="true"] {
                 background-color: #14532d;
@@ -406,7 +391,7 @@ class PadsPage(QWidget):
             QWidget#PadBoard QLabel#PadPresenceLabel {
                 background-color: #111827;
                 border: 1px solid #1f2937;
-                border-radius: 8px;
+                border-radius: 10px;
                 color: #94a3b8;
                 font-size: 12px;
                 font-weight: 700;
@@ -430,7 +415,7 @@ class PadsPage(QWidget):
             QLabel#SetGhostPrev, QLabel#SetGhostNext {
                 background-color: #111827;
                 border: 1px dashed #1f2937;
-                border-radius: 8px;
+                border-radius: 10px;
                 font-size: 14px;
                 font-weight: 600;
             }
@@ -443,13 +428,13 @@ class PadsPage(QWidget):
             QWidget#PadSetNav {
                 background: #111827;
                 border: 1px solid #1f2937;
-                border-radius: 8px;
+                border-radius: 22px;
             }
             QWidget#PadSetNav QPushButton {
                 background-color: #1f2937;
                 color: #e5e7eb;
                 border: 1px solid #334155;
-                border-radius: 8px;
+                border-radius: 12px;
                 font-size: 22px;
                 font-weight: 700;
             }
@@ -462,7 +447,6 @@ class PadsPage(QWidget):
                 font-size: 18px;
             }
             """
-            .replace("__ART_PATH__", art_path)
         )
 
     def _set_effects_visible(self, expanded: bool, *, init: bool = False) -> None:
