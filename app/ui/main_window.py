@@ -3,13 +3,20 @@ import subprocess
 from pathlib import Path
 
 from mido import Message
-from PyQt5.QtCore import QTimer
+from PyQt5.QtCore import QPoint, Qt, QTimer
 from PyQt5.QtWidgets import (
     QMainWindow,
     QFileDialog,
     QMessageBox,
     QAction,
     QInputDialog,
+    QHBoxLayout,
+    QLabel,
+    QMenu,
+    QPushButton,
+    QSizePolicy,
+    QVBoxLayout,
+    QWidget,
 )
 
 from app.io.timbal_input import (
@@ -50,9 +57,43 @@ def run_new_ui():
     save_config(config)
 
     win = MainWindow(engine, config)
-    win.resize(1400, 820)
+    win.resize(1600, 900)
     win.show()
     sys.exit(app.exec_())
+
+
+class AppChrome(QWidget):
+    def __init__(self, window: QMainWindow) -> None:
+        super().__init__(window)
+        self.window = window
+        self.setObjectName("AppChrome")
+        self.setFixedHeight(58)
+        self._drag_pos: QPoint | None = None
+
+    def mousePressEvent(self, event) -> None:
+        if event.button() == Qt.LeftButton:
+            self._drag_pos = event.globalPos() - self.window.frameGeometry().topLeft()
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event) -> None:
+        if self._drag_pos is not None and event.buttons() & Qt.LeftButton:
+            self.window.move(event.globalPos() - self._drag_pos)
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event) -> None:
+        self._drag_pos = None
+        super().mouseReleaseEvent(event)
+
+    def mouseDoubleClickEvent(self, event) -> None:
+        if event.button() == Qt.LeftButton and hasattr(self.window, "_toggle_maximize"):
+            self.window._toggle_maximize()
+            event.accept()
+            return
+        super().mouseDoubleClickEvent(event)
 
 
 class MainWindow(QMainWindow):
@@ -60,10 +101,10 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.engine = engine
         self.config = config
-        self.setWindowTitle("Timbal Digital - Nueva UI (beta segura)")
+        self.setWindowTitle("Timbal Digital - Testeo")
+        self.setWindowFlags(self.windowFlags() | Qt.FramelessWindowHint)
 
         self.pads_page = PadsPage(engine, config)
-        self.setCentralWidget(self.pads_page)
 
         self.dino_process = None
         self.calibration_dialog: CalibrationDialog | None = None
@@ -79,6 +120,7 @@ class MainWindow(QMainWindow):
         self.input_router.start()
 
         self._build_menu()
+        self._build_shell()
         self.statusBar().hide()
         QTimer.singleShot(1200, self._push_saved_calibration)
 
@@ -89,21 +131,107 @@ class MainWindow(QMainWindow):
         event.accept()
 
     def _build_menu(self) -> None:
-        menu_config = self.menuBar().addMenu("Configuracion")
+        self.menu_config = QMenu("Configuración", self)
         act_change_sf2 = QAction("Cambiar SoundFont...", self)
         act_change_sf2.triggered.connect(self._change_soundfont)
-        menu_config.addAction(act_change_sf2)
+        self.menu_config.addAction(act_change_sf2)
         act_program_sf2 = QAction("Preset/Bank SoundFont...", self)
         act_program_sf2.triggered.connect(self._change_soundfont_program)
-        menu_config.addAction(act_program_sf2)
-        act_calibration = QAction("Calibracion en vivo...", self)
+        self.menu_config.addAction(act_program_sf2)
+        act_calibration = QAction("Calibración en vivo...", self)
         act_calibration.triggered.connect(self._open_calibration_dialog)
-        menu_config.addAction(act_calibration)
+        self.menu_config.addAction(act_calibration)
 
-        menu_games = self.menuBar().addMenu("Juegos")
+        self.menu_games = QMenu("Juegos", self)
         act_dino = QAction("Iniciar DINO RITMO", self)
         act_dino.triggered.connect(self._launch_dino_ritmo)
-        menu_games.addAction(act_dino)
+        self.menu_games.addAction(act_dino)
+
+    def _build_shell(self) -> None:
+        shell = QWidget()
+        shell.setObjectName("AppShell")
+        shell_layout = QVBoxLayout(shell)
+        shell_layout.setContentsMargins(0, 0, 0, 0)
+        shell_layout.setSpacing(0)
+
+        chrome = AppChrome(self)
+        chrome_layout = QHBoxLayout(chrome)
+        chrome_layout.setContentsMargins(28, 0, 22, 0)
+        chrome_layout.setSpacing(12)
+
+        mark = QLabel(chr(0x25CE))
+        mark.setObjectName("AppMark")
+        chrome_layout.addWidget(mark)
+
+        title = QLabel("Timbal Digital")
+        title.setObjectName("AppTitle")
+        chrome_layout.addWidget(title)
+
+        subtitle = QLabel("- Testeo")
+        subtitle.setObjectName("AppTitleMuted")
+        chrome_layout.addWidget(subtitle)
+        chrome_layout.addStretch(1)
+
+        btn_min = self._window_button("-")
+        btn_min.clicked.connect(self.showMinimized)
+        btn_max = self._window_button("□")
+        btn_max.clicked.connect(self._toggle_maximize)
+        btn_close = self._window_button("X", close=True)
+        btn_close.clicked.connect(self.close)
+        chrome_layout.addWidget(btn_min)
+        chrome_layout.addWidget(btn_max)
+        chrome_layout.addWidget(btn_close)
+
+        tabs = QWidget()
+        tabs.setObjectName("AppTabs")
+        tabs.setFixedHeight(45)
+        tabs_layout = QHBoxLayout(tabs)
+        tabs_layout.setContentsMargins(4, 0, 0, 0)
+        tabs_layout.setSpacing(0)
+
+        self.btn_config = self._tab_button("Configuración")
+        self.btn_config.clicked.connect(
+            lambda: self._show_tab_menu(self.btn_config, self.menu_config)
+        )
+        self.btn_games = self._tab_button("Juegos")
+        self.btn_games.clicked.connect(
+            lambda: self._show_tab_menu(self.btn_games, self.menu_games)
+        )
+        self.btn_test = self._tab_button("Testeo", active=True)
+        tabs_layout.addWidget(self.btn_config)
+        tabs_layout.addWidget(self.btn_games)
+        tabs_layout.addWidget(self.btn_test)
+        tabs_layout.addStretch(1)
+
+        shell_layout.addWidget(chrome)
+        shell_layout.addWidget(tabs)
+        shell_layout.addWidget(self.pads_page, 1)
+        self.setCentralWidget(shell)
+
+    def _window_button(self, text: str, *, close: bool = False) -> QPushButton:
+        btn = QPushButton(text)
+        btn.setObjectName("WindowCloseButton" if close else "WindowButton")
+        btn.setFixedSize(44, 34)
+        btn.setFocusPolicy(Qt.NoFocus)
+        return btn
+
+    def _tab_button(self, text: str, *, active: bool = False) -> QPushButton:
+        btn = QPushButton(text)
+        btn.setObjectName("ChromeTab")
+        btn.setProperty("active", active)
+        btn.setCheckable(False)
+        btn.setCursor(Qt.PointingHandCursor)
+        btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
+        return btn
+
+    def _show_tab_menu(self, button: QPushButton, menu: QMenu) -> None:
+        menu.popup(button.mapToGlobal(button.rect().bottomLeft()))
+
+    def _toggle_maximize(self) -> None:
+        if self.isMaximized():
+            self.showNormal()
+        else:
+            self.showMaximized()
 
     def _build_child_command(self, mode_flag: str) -> list[str]:
         if getattr(sys, "frozen", False):

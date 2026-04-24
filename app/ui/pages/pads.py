@@ -43,15 +43,16 @@ DEFAULT_PAD_ENABLED: List[bool] = [True for _ in range(PAD_COUNT)]
 class Vu(QWidget):
     def __init__(self) -> None:
         super().__init__()
-        self.setMinimumSize(48, 320)
+        self.setObjectName("VuMeter")
+        self.setMinimumSize(130, 310)
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 6, 0, 6)
+        layout.setContentsMargins(18, 20, 18, 20)
         layout.setSpacing(4)
         self.bars: List[QLabel] = []
         for _ in range(21):
             bar = QLabel()
-            bar.setFixedHeight(18)
-            bar.setStyleSheet("background:#2b3648;")
+            bar.setFixedHeight(12)
+            bar.setStyleSheet(self._bar_style("#121d29", "#25364a"))
             layout.addWidget(bar)
             self.bars.append(bar)
         layout.addStretch(1)
@@ -77,14 +78,22 @@ class Vu(QWidget):
     def _paint(self) -> None:
         if not self._enabled:
             for bar in self.bars:
-                bar.setStyleSheet("background:#111827;")
+                bar.setStyleSheet(self._bar_style("#07111b", "#162433"))
             return
 
         active = self.level // 9
         for idx, bar in enumerate(reversed(self.bars)):
-            bar.setStyleSheet(
-                "background:#22c55e" if idx < active else "background:#2b3648;"
-            )
+            if idx < active:
+                bar.setStyleSheet(self._bar_style("#19d8d2", "#2cf7ee"))
+            else:
+                bar.setStyleSheet(self._bar_style("#121d29", "#25364a"))
+
+    def _bar_style(self, color: str, border: str) -> str:
+        return (
+            f"background:{color};"
+            f"border:1px solid {border};"
+            "border-radius:3px;"
+        )
 
     def _tick(self) -> None:
         if not self._enabled:
@@ -126,12 +135,12 @@ class PadsPage(QWidget):
 
         container = QWidget()
         container.setObjectName("PadsContent")
-        container.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Expanding)
-        container.setMinimumWidth(1260)
-        container.setMaximumWidth(1500)
+        container.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        container.setMinimumWidth(1280)
+        container.setMaximumWidth(1680)
         main = QHBoxLayout(container)
-        main.setContentsMargins(24, 16, 24, 16)
-        main.setSpacing(24)
+        main.setContentsMargins(18, 18, 18, 18)
+        main.setSpacing(20)
 
         effects_collapsed = bool(self.config.get(self._config_key, False))
         self.effects_widget = EffectsPage(engine, self.config)
@@ -139,8 +148,8 @@ class PadsPage(QWidget):
         self.effects_holder.setObjectName("EffectsHolder")
         self.effects_holder.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
         effects_layout = QVBoxLayout(self.effects_holder)
-        effects_layout.setContentsMargins(0, 12, 0, 12)
-        effects_layout.setSpacing(12)
+        effects_layout.setContentsMargins(14, 16, 14, 14)
+        effects_layout.setSpacing(10)
 
         self.effects_toggle = QPushButton()
         self.effects_toggle.setObjectName("EffectsToggle")
@@ -152,21 +161,21 @@ class PadsPage(QWidget):
         self.effects_container = QWidget()
         self.effects_container.setObjectName("EffectsContainer")
         container_layout = QVBoxLayout(self.effects_container)
-        container_layout.setContentsMargins(12, 12, 12, 12)
+        container_layout.setContentsMargins(0, 0, 0, 0)
         container_layout.addWidget(self.effects_widget)
         effects_layout.addWidget(self.effects_container, 1)
         effects_layout.addStretch(1)
 
         board = QWidget()
         board.setObjectName("PadBoard")
-        board.setMinimumSize(540, 380)
+        board.setMinimumSize(780, 520)
         board.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         board_layout = QVBoxLayout(board)
-        board_layout.setContentsMargins(28, 16, 28, 22)
+        board_layout.setContentsMargins(30, 22, 30, 24)
         board_layout.setSpacing(10)
 
         vu_grid = QGridLayout()
-        vu_grid.setHorizontalSpacing(18)
+        vu_grid.setHorizontalSpacing(20)
         for idx in range(PAD_COUNT):
             vu = Vu()
             vu.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
@@ -179,9 +188,9 @@ class PadsPage(QWidget):
         bulk_row.setContentsMargins(0, 0, 0, 0)
         bulk_row.setSpacing(12)
         for label, handler in (
-            ("Todos ON", lambda: self._set_all_pads_enabled(True)),
-            ("Todos OFF", lambda: self._set_all_pads_enabled(False)),
-            ("Solo estables", self._enable_only_stable_pads),
+            ("TODOS ON", lambda: self._set_all_pads_enabled(True)),
+            ("TODOS OFF", lambda: self._set_all_pads_enabled(False)),
+            ("SOLO ESTABLES", self._enable_only_stable_pads),
         ):
             btn = QPushButton(label)
             btn.setObjectName("PadGlobalButton")
@@ -191,13 +200,13 @@ class PadsPage(QWidget):
         board_layout.addLayout(bulk_row)
 
         power_row = QHBoxLayout()
-        power_row.setContentsMargins(0, 0, 0, 2)
+        power_row.setContentsMargins(0, 2, 0, 2)
         power_row.setSpacing(20)
         for idx in range(PAD_COUNT):
             toggle = QPushButton()
             toggle.setObjectName("PadPowerButton")
             toggle.setCheckable(True)
-            toggle.setMinimumHeight(40)
+            toggle.setMinimumHeight(38)
             toggle.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
             toggle.clicked.connect(
                 lambda checked, pad=idx: self._set_pad_enabled(pad, checked)
@@ -207,7 +216,7 @@ class PadsPage(QWidget):
         board_layout.addLayout(power_row)
 
         presence_row = QHBoxLayout()
-        presence_row.setContentsMargins(0, 0, 0, 4)
+        presence_row.setContentsMargins(0, 0, 0, 0)
         presence_row.setSpacing(20)
         for _ in range(PAD_COUNT):
             lbl = QLabel()
@@ -220,7 +229,7 @@ class PadsPage(QWidget):
         board_layout.addLayout(presence_row)
 
         prev_row = QHBoxLayout()
-        prev_row.setContentsMargins(0, 8, 0, 6)
+        prev_row.setContentsMargins(0, 4, 0, 2)
         prev_row.setSpacing(14)
         for _ in range(PAD_COUNT):
             lbl = QLabel()
@@ -232,7 +241,7 @@ class PadsPage(QWidget):
         board_layout.addLayout(prev_row)
 
         grid = QGridLayout()
-        grid.setContentsMargins(16, 0, 16, 0)
+        grid.setContentsMargins(0, 0, 0, 0)
         grid.setHorizontalSpacing(20)
         grid.setVerticalSpacing(10)
         for idx in range(PAD_COUNT):
@@ -252,7 +261,7 @@ class PadsPage(QWidget):
         board_layout.addLayout(grid)
 
         next_row = QHBoxLayout()
-        next_row.setContentsMargins(0, 6, 0, 0)
+        next_row.setContentsMargins(0, 4, 0, 0)
         next_row.setSpacing(14)
         for _ in range(PAD_COUNT):
             lbl = QLabel()
@@ -276,8 +285,8 @@ class PadsPage(QWidget):
         nav_widget.setObjectName("PadSetNav")
         nav_widget.setFixedWidth(90)
         nav_layout = QVBoxLayout(nav_widget)
-        nav_layout.setContentsMargins(0, 60, 0, 60)
-        nav_layout.setSpacing(24)
+        nav_layout.setContentsMargins(0, 46, 0, 46)
+        nav_layout.setSpacing(26)
         nav_layout.addStretch(1)
         nav_layout.addWidget(self.btn_up, alignment=Qt.AlignHCenter)
         nav_layout.addWidget(self.set_label, alignment=Qt.AlignHCenter)
@@ -299,86 +308,98 @@ class PadsPage(QWidget):
         self.setStyleSheet(
             """
             QWidget#PadsContent {
-                background: transparent;
+                background: #07111b;
             }
             QWidget#EffectsHolder {
-                background: #111827;
-                border: 1px solid #1f2937;
-                border-radius: 22px;
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #111f2c, stop:1 #07111b);
+                border: 1px solid #2d465b;
+                border-radius: 16px;
             }
             QPushButton#EffectsToggle {
-                background-color: #1f2937;
-                color: #e5e7eb;
-                border: 1px solid #334155;
-                border-radius: 14px;
-                padding: 10px 14px;
-                font-size: 15px;
-                font-weight: 600;
+                background: transparent;
+                color: #19d8d2;
+                border: 0;
+                border-radius: 8px;
+                padding: 0;
+                font-size: 16px;
+                font-weight: 800;
+                text-align: left;
             }
             QPushButton#EffectsToggle:hover {
-                background-color: #233044;
+                color: #f2ffff;
             }
             QWidget#EffectsContainer {
-                background-color: #0f172a;
-                border: 1px solid #1f2937;
-                border-radius: 18px;
+                background: transparent;
+                border: 0;
             }
             QWidget#PadBoard {
-                background-color: #0f172a;
-                border: 1px solid #1f2937;
-                border-radius: 28px;
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #102033, stop:0.06 #17283a, stop:0.5 #07111b, stop:1 #08121c);
+                border: 1px solid #2d465b;
+                border-radius: 18px;
+            }
+            QWidget#VuMeter {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #0f1c2b, stop:0.5 #07111b, stop:1 #061019);
+                border: 1px solid #1f3548;
+                border-radius: 18px;
             }
             QWidget#PadBoard QPushButton#PadGlobalButton {
-                background-color: #111827;
-                color: #cbd5e1;
-                border: 1px solid #334155;
-                border-radius: 12px;
-                padding: 8px 14px;
-                font-size: 13px;
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #123047, stop:0.45 #0a1826, stop:1 #061019);
+                color: #d9f7fb;
+                border: 1px solid #2d526a;
+                border-radius: 9px;
+                padding: 9px 20px;
+                font-size: 12px;
                 font-weight: 700;
             }
             QWidget#PadBoard QPushButton#PadGlobalButton:hover {
-                background-color: #1f2937;
+                border-color: #19d8d2;
+                color: #ffffff;
             }
             QWidget#PadBoard QPushButton#PadNoteButton {
-                background-color: #1f2937;
-                color: #e5e7eb;
-                border: 1px solid #334155;
-                border-radius: 16px;
-                font-size: 20px;
-                font-weight: 700;
-                letter-spacing: 0.6px;
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #1b2c3f, stop:0.5 #122030, stop:1 #0b1420);
+                color: #cfd8e6;
+                border: 1px solid #36536b;
+                border-radius: 12px;
+                font-size: 32px;
+                font-weight: 500;
             }
             QWidget#PadBoard QPushButton#PadNoteButton[armed="true"]:hover {
-                background-color: #3b82f6;
-                border-color: #60a5fa;
+                border-color: #19d8d2;
+                color: #ffffff;
             }
             QWidget#PadBoard QPushButton#PadNoteButton[armed="true"]:pressed {
-                background-color: #1d4ed8;
+                background: #061019;
+                color: #19d8d2;
             }
             QWidget#PadBoard QPushButton#PadNoteButton[armed="false"] {
-                background-color: #111827;
-                color: #64748b;
-                border-color: #1f2937;
+                background: #07111b;
+                color: #475569;
+                border-color: #162433;
             }
             QWidget#PadBoard QPushButton#PadNoteButton[armed="false"]:hover {
-                background-color: #111827;
-                border-color: #1f2937;
+                background: #07111b;
+                border-color: #162433;
             }
             QWidget#PadBoard QPushButton#PadPowerButton {
-                border-radius: 13px;
+                border-radius: 10px;
                 font-size: 14px;
-                font-weight: 700;
-                padding: 8px 10px;
-                letter-spacing: 0.5px;
+                font-weight: 800;
+                padding: 8px 12px;
             }
             QWidget#PadBoard QPushButton#PadPowerButton[armed="true"] {
-                background-color: #14532d;
-                color: #ecfdf5;
-                border: 1px solid #22c55e;
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #0d5661, stop:0.5 #092231, stop:1 #061019);
+                color: #19d8d2;
+                border: 1px solid #19d8d2;
             }
             QWidget#PadBoard QPushButton#PadPowerButton[armed="true"]:hover {
-                background-color: #166534;
+                color: #ffffff;
+                border-color: #7dfcf6;
             }
             QWidget#PadBoard QPushButton#PadPowerButton[armed="false"] {
                 background-color: #3f1d1d;
@@ -389,18 +410,18 @@ class PadsPage(QWidget):
                 background-color: #4c1d1d;
             }
             QWidget#PadBoard QLabel#PadPresenceLabel {
-                background-color: #111827;
-                border: 1px solid #1f2937;
-                border-radius: 10px;
-                color: #94a3b8;
+                background: #07111b;
+                border: 1px solid #2d526a;
+                border-radius: 9px;
+                color: #19d8d2;
                 font-size: 12px;
                 font-weight: 700;
                 padding: 4px 6px;
             }
             QWidget#PadBoard QLabel#PadPresenceLabel[state="connected"] {
-                color: #bbf7d0;
-                border-color: #166534;
-                background-color: #052e16;
+                color: #19d8d2;
+                border-color: #19d8d2;
+                background-color: #061a20;
             }
             QWidget#PadBoard QLabel#PadPresenceLabel[state="disconnected"] {
                 color: #fecaca;
@@ -409,42 +430,45 @@ class PadsPage(QWidget):
             }
             QWidget#PadBoard QLabel#PadPresenceLabel[state="unknown"] {
                 color: #cbd5e1;
-                border-color: #334155;
-                background-color: #111827;
+                border-color: #2d526a;
+                background-color: #07111b;
             }
             QLabel#SetGhostPrev, QLabel#SetGhostNext {
-                background-color: #111827;
-                border: 1px dashed #1f2937;
-                border-radius: 10px;
+                background: #07111b;
+                border: 1px solid #26384d;
+                border-radius: 8px;
                 font-size: 14px;
                 font-weight: 600;
+                padding: 3px 4px;
             }
             QLabel#SetGhostPrev {
-                color: #475569;
+                color: #b8c4d3;
             }
             QLabel#SetGhostNext {
-                color: #94a3b8;
+                color: #b8c4d3;
             }
             QWidget#PadSetNav {
-                background: #111827;
-                border: 1px solid #1f2937;
-                border-radius: 22px;
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #111f2c, stop:1 #07111b);
+                border: 1px solid #2d465b;
+                border-radius: 16px;
             }
             QWidget#PadSetNav QPushButton {
-                background-color: #1f2937;
-                color: #e5e7eb;
-                border: 1px solid #334155;
+                background: #07111b;
+                color: #a8f7ff;
+                border: 1px solid #2d526a;
                 border-radius: 12px;
                 font-size: 22px;
                 font-weight: 700;
             }
             QWidget#PadSetNav QPushButton:hover {
-                background-color: #3b82f6;
+                border-color: #19d8d2;
+                color: #ffffff;
             }
             QWidget#PadSetNav QLabel {
-                color: #94a3b8;
+                color: #dbe8f1;
                 font-weight: 600;
-                font-size: 18px;
+                font-size: 20px;
             }
             """
         )
@@ -452,12 +476,12 @@ class PadsPage(QWidget):
     def _set_effects_visible(self, expanded: bool, *, init: bool = False) -> None:
         self.effects_container.setVisible(expanded)
         if expanded:
-            self.effects_toggle.setText(f"{chr(0x25C0)} Efectos")
-            self.effects_holder.setMinimumWidth(280)
-            self.effects_holder.setMaximumWidth(360)
+            self.effects_toggle.setText("✣  EFECTOS")
+            self.effects_holder.setMinimumWidth(340)
+            self.effects_holder.setMaximumWidth(420)
         else:
-            self.effects_toggle.setText(f"{chr(0x25B6)} Efectos")
-            width = max(72, self.effects_toggle.sizeHint().width() + 16)
+            self.effects_toggle.setText(f"{chr(0x25B6)}")
+            width = max(58, self.effects_toggle.sizeHint().width() + 18)
             self.effects_holder.setMinimumWidth(width)
             self.effects_holder.setMaximumWidth(width)
         if not init:
@@ -468,7 +492,7 @@ class PadsPage(QWidget):
         self._set_effects_visible(checked)
 
     def _power_icon(self) -> str:
-        return chr(0x23FB)
+        return chr(0x25B6)
 
     def _save_config(self) -> None:
         try:
@@ -551,7 +575,7 @@ class PadsPage(QWidget):
             power_button.setChecked(enabled)
             power_button.setProperty("armed", enabled)
             power_button.setText(
-                f"{self._power_icon()} P{pad_idx + 1} {'ON' if enabled else 'OFF'}"
+                f"{self._power_icon()}  P{pad_idx + 1} {'ON' if enabled else 'OFF'}"
             )
             if not enabled:
                 power_button.setToolTip("Pad apagado manualmente")

@@ -33,18 +33,51 @@ class EffectsPage(QWidget):
         self.setObjectName("EffectsPage")
         self._build_ui()
         self.setStyleSheet(
-            "QWidget#EffectsPage{color:#e5e7eb;}"
-            "QWidget#EffectsPage QLabel{color:#e5e7eb;}"
-            "QWidget#EffectsPage QGroupBox{color:#e5e7eb;}"
-            "QWidget#EffectsPage QCheckBox{color:#e5e7eb;}"
-            "QWidget#EffectsPage QPushButton{color:#e5e7eb;}"
+            """
+            QWidget#EffectsPage {
+                color: #dbe8f1;
+                background: transparent;
+            }
+            QWidget#EffectsPage QLabel {
+                color: #cfe2ef;
+                font-size: 12px;
+            }
+            QWidget#EffectsPage QLabel#EffectsTitle {
+                color: #19d8d2;
+                font-size: 16px;
+                font-weight: 800;
+                padding: 0 0 2px 0;
+            }
+            QWidget#EffectsPage QGroupBox {
+                color: #dbe8f1;
+                font-size: 13px;
+                font-weight: 800;
+            }
+            QWidget#EffectsPage QCheckBox {
+                color: #dbe8f1;
+                font-size: 12px;
+            }
+            QWidget#EffectsPage QPushButton {
+                color: #d9f7fb;
+                min-height: 25px;
+                font-size: 11px;
+                font-weight: 700;
+            }
+            QWidget#EffectsPage QPushButton:hover {
+                color: #ffffff;
+            }
+            """
         )
 
     def _build_ui(self) -> None:
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(8)
 
-        reverb_box = QGroupBox("Reverb")
+        reverb_box = QGroupBox("REVERB")
         rev_layout = QVBoxLayout()
+        rev_layout.setContentsMargins(10, 10, 10, 10)
+        rev_layout.setSpacing(8)
 
         self.chk_rev_on = QCheckBox("Reverb ON")
         self.chk_rev_on.setChecked(True)
@@ -76,6 +109,7 @@ class EffectsPage(QWidget):
         rev_layout.addWidget(self.sld_rev_damp)
 
         presets_row = QHBoxLayout()
+        presets_row.setSpacing(8)
         for key, label in (("seco", "Preset: Seco"), ("media", "Preset: Media"), ("sala", "Preset: Sala")):
             btn = QPushButton(label)
             btn.clicked.connect(lambda _, name=key: self.apply_reverb_preset(name))
@@ -85,8 +119,10 @@ class EffectsPage(QWidget):
         reverb_box.setLayout(rev_layout)
         layout.addWidget(reverb_box)
 
-        dynamics_box = QGroupBox("Dinamica")
+        dynamics_box = QGroupBox("DINÁMICA")
         dyn_layout = QVBoxLayout()
+        dyn_layout.setContentsMargins(10, 10, 10, 10)
+        dyn_layout.setSpacing(8)
 
         self.lbl_bright = QLabel()
         self.sld_bright = QSlider(Qt.Horizontal)
@@ -142,21 +178,25 @@ class EffectsPage(QWidget):
         dyn_layout.addWidget(self.lbl_gate)
         dyn_layout.addWidget(self.sld_gate)
         # Calibración por parche (extra de velocidad por canal 0-4).
-        calib_box = QGroupBox("Calibración parches")
+        calib_box = QGroupBox("CALIBRACIÓN PARCHES")
         calib_layout = QVBoxLayout()
+        calib_layout.setContentsMargins(8, 8, 8, 8)
         self.pad_calib_sliders = []
         calib_row = QHBoxLayout()
-        calib_row.setSpacing(6)
+        calib_row.setSpacing(14)
         calib_values = self.config.get("pad_calibration", [0, 0, 0, 0, 0])
         while len(calib_values) < 5:
             calib_values.append(0)
         for idx in range(5):
             col = QVBoxLayout()
+            col.setSpacing(5)
             lbl = QLabel(f"P{idx+1}")
             lbl.setAlignment(Qt.AlignCenter)
-            sld = QSlider(Qt.Vertical)
+            sld = QSlider(Qt.Horizontal)
             sld.setRange(0, 40)  # 0 = sin extra, 40 = extra máximo
             sld.setValue(int(calib_values[idx]))
+            sld.setFixedWidth(42)
+            sld.setFixedHeight(18)
             sld.setToolTip("Extra de sensibilidad para este parche")
             sld.valueChanged.connect(lambda v, i=idx: self._apply_pad_calib(i, v))
             self.pad_calib_sliders.append(sld)
@@ -170,8 +210,10 @@ class EffectsPage(QWidget):
         dynamics_box.setLayout(dyn_layout)
         layout.addWidget(dynamics_box)
 
-        config_box = QGroupBox("Configuracion")
+        config_box = QGroupBox("CONFIGURACIÓN")
         cfg_layout = QVBoxLayout()
+        cfg_layout.setContentsMargins(10, 10, 10, 10)
+        cfg_layout.setSpacing(8)
         self.lbl_sf = QLabel(self._current_sf_text())
         self.btn_sf = QPushButton("Seleccionar SoundFont")
         self.btn_sf.clicked.connect(self._select_sf2)
