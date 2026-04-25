@@ -19,6 +19,7 @@ from PyQt5.QtWidgets import (
 )
 
 from app.ui.pages.effects_presets import get_reverb_preset
+from app.ui.skin.widgets import optional_border_image, skin_asset
 from app.state.settings import load_config, save_config
 
 
@@ -47,6 +48,16 @@ class EffectsPage(QWidget):
         self._last_reverb_level_value = initial_level if initial_level > 0 else 40
         self.setObjectName("EffectsPage")
         self._build_ui()
+        tech_card_skin = optional_border_image(
+            skin_asset("frames", "card_9.png"),
+            (24, 24, 24, 24),
+            fallback=(
+                "background: qlineargradient(x1:0, y1:0, x2:0, y2:1,"
+                " stop:0 #132235, stop:0.52 #091522, stop:1 #050b12);"
+                "border: 1px solid #33495f;"
+                "border-radius: 14px;"
+            ),
+        )
         self.setStyleSheet(
             """
             QWidget#EffectsPage {
@@ -58,12 +69,7 @@ class EffectsPage(QWidget):
                 font-size: 12px;
             }
             QFrame#TechCard {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #132235,
-                    stop:0.52 #091522,
-                    stop:1 #050b12);
-                border: 1px solid #33495f;
-                border-radius: 14px;
+                __TECH_CARD_SKIN__
             }
             QFrame#TechCard:hover {
                 border-color: #4f6d86;
@@ -88,6 +94,7 @@ class EffectsPage(QWidget):
                 color: #ffffff;
             }
             """
+            .replace("__TECH_CARD_SKIN__", tech_card_skin)
         )
 
     def _build_ui(self) -> None:

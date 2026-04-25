@@ -19,6 +19,7 @@ from mido import Message
 from app.state.settings import save_config
 from app.ui.components.note_selector import NoteSelectorDialog
 from app.ui.pages.effects import EffectsPage
+from app.ui.skin.widgets import optional_border_image, skin_asset
 
 NOTE_NAMES = "C C# D D# E F F# G G# A A# B".split()
 
@@ -49,6 +50,7 @@ class Vu(QWidget):
         self.setObjectName("VuMeter")
         self.setMinimumSize(130, 340)
         self.level = 0
+        self.peak_hold = 0
         self._enabled = True
 
         self.timer = QTimer(self)
@@ -62,19 +64,23 @@ class Vu(QWidget):
             self.update()
             return
         self.level = max(self.level, int(max(0, min(127, value))))
+        self.peak_hold = max(self.peak_hold, self.level)
         self.update()
 
     def set_enabled(self, enabled: bool) -> None:
         self._enabled = bool(enabled)
         if not self._enabled:
             self.level = 0
+            self.peak_hold = 0
         self.update()
 
     def _tick(self) -> None:
         if not self._enabled:
             self.level = 0
+            self.peak_hold = 0
         else:
-            self.level = max(0, self.level - 5)
+            self.level = max(0, self.level - 3)
+            self.peak_hold = max(0, self.peak_hold - 1)
         self.update()
 
     def paintEvent(self, event) -> None:
@@ -115,9 +121,12 @@ class Vu(QWidget):
         painter.drawPath(slot_path)
 
         active = 0
+        peak = 0
         if self._enabled:
             active = int(round((self.level / 127.0) * self.SEGMENTS))
             active = max(0, min(self.SEGMENTS, active))
+            peak = int(round((self.peak_hold / 127.0) * self.SEGMENTS))
+            peak = max(0, min(self.SEGMENTS, peak))
 
         gap = 4.0
         side_pad = 8.0
@@ -145,6 +154,15 @@ class Vu(QWidget):
 
             painter.drawRoundedRect(rect, 3, 3)
 
+            if peak > 0 and i == peak - 1:
+                painter.setPen(QPen(QColor("#d9fbff"), 1.0))
+                painter.drawLine(
+                    int(rect.left() + 4),
+                    int(rect.top() + 1),
+                    int(rect.right() - 4),
+                    int(rect.top() + 1),
+                )
+
         if active > 0 and self._enabled:
             glow = QRectF(slot.left() + 8, slot.bottom() - 34, slot.width() - 16, 28)
             painter.setPen(Qt.NoPen)
@@ -171,6 +189,8 @@ class PadsPage(QWidget):
         self.pad_noise: List[int | None] = [None for _ in range(PAD_COUNT)]
         self.pad_value: List[int | None] = [None for _ in range(PAD_COUNT)]
         self.pad_peak: List[int | None] = [None for _ in range(PAD_COUNT)]
+        self.ui_preview_mode = bool(self.config.get("ui_preview_mode", False))
+        self._preview_timer: QTimer | None = None
 
         if "pad_enabled" not in self.config:
             self.config["pad_enabled"] = list(self.pad_enabled)
@@ -218,11 +238,11 @@ class PadsPage(QWidget):
         board.setMinimumSize(780, 520)
         board.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         board_layout = QVBoxLayout(board)
-        board_layout.setContentsMargins(30, 22, 30, 24)
-        board_layout.setSpacing(10)
+        board_layout.setContentsMargins(42, 28, 42, 28)
+        board_layout.setSpacing(11)
 
         vu_grid = QGridLayout()
-        vu_grid.setHorizontalSpacing(20)
+        vu_grid.setHorizontalSpacing(28)
         for idx in range(PAD_COUNT):
             vu = Vu()
             vu.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
@@ -253,7 +273,8 @@ class PadsPage(QWidget):
             toggle = QPushButton()
             toggle.setObjectName("PadPowerButton")
             toggle.setCheckable(True)
-            toggle.setMinimumHeight(38)
+            toggle.setMinimumHeight(42)
+            toggle.setMaximumHeight(46)
             toggle.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
             toggle.clicked.connect(
                 lambda checked, pad=idx: self._set_pad_enabled(pad, checked)
@@ -269,7 +290,8 @@ class PadsPage(QWidget):
             lbl = QLabel()
             lbl.setObjectName("PadPresenceLabel")
             lbl.setAlignment(Qt.AlignCenter)
-            lbl.setMinimumHeight(28)
+            lbl.setMinimumHeight(30)
+            lbl.setMaximumHeight(32)
             lbl.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
             presence_row.addWidget(lbl)
             self.pad_presence_labels.append(lbl)
@@ -294,8 +316,9 @@ class PadsPage(QWidget):
         for idx in range(PAD_COUNT):
             btn = QPushButton()
             btn.setObjectName("PadNoteButton")
-            btn.setMinimumSize(150, 88)
-            btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+            btn.setMinimumSize(155, 88)
+            btn.setMaximumHeight(104)
+            btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
             btn.setToolTip("Click para tocar - clic derecho para cambiar nota")
             btn.clicked.connect(lambda _, pad=idx: self._trigger_pad(pad))
             btn.setContextMenuPolicy(Qt.CustomContextMenu)
@@ -320,17 +343,17 @@ class PadsPage(QWidget):
         board_layout.addLayout(next_row)
 
         self.btn_up = QPushButton(chr(0x25B2))
-        self.btn_up.setFixedSize(54, 58)
+        self.btn_up.setFixedSize(58, 58)
         self.btn_up.clicked.connect(lambda: self._change_set(-1))
         self.btn_down = QPushButton(chr(0x25BC))
-        self.btn_down.setFixedSize(54, 58)
+        self.btn_down.setFixedSize(58, 58)
         self.btn_down.clicked.connect(lambda: self._change_set(1))
         self.set_label = QLabel()
         self.set_label.setAlignment(Qt.AlignCenter)
 
         nav_widget = QWidget()
         nav_widget.setObjectName("PadSetNav")
-        nav_widget.setFixedWidth(90)
+        nav_widget.setFixedWidth(96)
         nav_layout = QVBoxLayout(nav_widget)
         nav_layout.setContentsMargins(0, 46, 0, 46)
         nav_layout.setSpacing(26)
@@ -349,18 +372,88 @@ class PadsPage(QWidget):
         self._apply_styles()
         self._set_effects_visible(not effects_collapsed, init=True)
         self._refresh_ui()
+        if self.ui_preview_mode:
+            self._preview_timer = QTimer(self)
+            self._preview_timer.setInterval(900)
+            self._preview_timer.timeout.connect(self._apply_preview_visual_state)
+            self._preview_timer.start()
 
     def _apply_styles(self) -> None:
+        effects_holder_skin = optional_border_image(
+            skin_asset("frames", "sidebar_9.png"),
+            (32, 32, 32, 32),
+            fallback=(
+                "background: qlineargradient(x1:0, y1:0, x2:0, y2:1,"
+                " stop:0 #111f2c, stop:1 #07111b);"
+                "border: 1px solid #2d465b;"
+                "border-radius: 16px;"
+            ),
+        )
+        board_skin = optional_border_image(
+            skin_asset("frames", "board_9.png"),
+            (48, 48, 48, 48),
+            fallback=(
+                "background: qlineargradient(x1:0, y1:0, x2:0, y2:1,"
+                " stop:0 #102033, stop:0.06 #17283a,"
+                " stop:0.5 #07111b, stop:1 #08121c);"
+                "border: 1px solid #2d465b;"
+                "border-radius: 18px;"
+            ),
+        )
+        nav_skin = optional_border_image(
+            skin_asset("frames", "nav_rail_9.png"),
+            (32, 32, 32, 32),
+            fallback=(
+                "background: qlineargradient(x1:0, y1:0, x2:0, y2:1,"
+                " stop:0 #111f2c, stop:1 #07111b);"
+                "border: 1px solid #2d465b;"
+                "border-radius: 16px;"
+            ),
+        )
+        note_pad_skin = optional_border_image(
+            skin_asset("frames", "note_pad_9.png"),
+            (24, 24, 24, 24),
+            fallback=(
+                "background: qlineargradient(x1:0, y1:0, x2:0, y2:1,"
+                " stop:0 #1b2c3f, stop:0.5 #122030, stop:1 #0b1420);"
+                "border: 1px solid #36536b;"
+                "border-radius: 12px;"
+            ),
+        )
+        button_on_skin = optional_border_image(
+            skin_asset("frames", "button_on_9.png"),
+            (16, 16, 16, 16),
+            fallback=(
+                "background: qlineargradient(x1:0, y1:0, x2:0, y2:1,"
+                " stop:0 #0d5661, stop:0.5 #092231, stop:1 #061019);"
+                "border: 1px solid #19d8d2;"
+            ),
+        )
+        button_off_skin = optional_border_image(
+            skin_asset("frames", "button_off_9.png"),
+            (16, 16, 16, 16),
+            fallback=(
+                "background: qlineargradient(x1:0, y1:0, x2:0, y2:1,"
+                " stop:0 #121b26, stop:1 #071019);"
+                "border: 1px solid #27384a;"
+            ),
+        )
+        button_secondary_skin = optional_border_image(
+            skin_asset("frames", "button_secondary_9.png"),
+            (16, 16, 16, 16),
+            fallback=(
+                "background: qlineargradient(x1:0, y1:0, x2:0, y2:1,"
+                " stop:0 #123047, stop:0.45 #0a1826, stop:1 #061019);"
+                "border: 1px solid #2d526a;"
+            ),
+        )
         self.setStyleSheet(
             """
             QWidget#PadsContent {
                 background: #07111b;
             }
             QWidget#EffectsHolder {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #111f2c, stop:1 #07111b);
-                border: 1px solid #2d465b;
-                border-radius: 16px;
+                __EFFECTS_HOLDER_SKIN__
             }
             QPushButton#EffectsToggle {
                 background: transparent;
@@ -380,10 +473,7 @@ class PadsPage(QWidget):
                 border: 0;
             }
             QWidget#PadBoard {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #102033, stop:0.06 #17283a, stop:0.5 #07111b, stop:1 #08121c);
-                border: 1px solid #2d465b;
-                border-radius: 18px;
+                __BOARD_SKIN__
             }
             QWidget#VuMeter {
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
@@ -392,10 +482,8 @@ class PadsPage(QWidget):
                 border-radius: 18px;
             }
             QWidget#PadBoard QPushButton#PadGlobalButton {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #123047, stop:0.45 #0a1826, stop:1 #061019);
+                __BUTTON_SECONDARY_SKIN__
                 color: #d9f7fb;
-                border: 1px solid #2d526a;
                 border-radius: 9px;
                 padding: 9px 20px;
                 font-size: 12px;
@@ -406,11 +494,8 @@ class PadsPage(QWidget):
                 color: #ffffff;
             }
             QWidget#PadBoard QPushButton#PadNoteButton {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #1b2c3f, stop:0.5 #122030, stop:1 #0b1420);
+                __NOTE_PAD_SKIN__
                 color: #cfd8e6;
-                border: 1px solid #36536b;
-                border-radius: 12px;
                 font-size: 32px;
                 font-weight: 500;
             }
@@ -438,21 +523,16 @@ class PadsPage(QWidget):
                 padding: 8px 12px;
             }
             QWidget#PadBoard QPushButton#PadPowerButton[armed="true"] {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #0d5661, stop:0.5 #092231, stop:1 #061019);
+                __BUTTON_ON_SKIN__
                 color: #19d8d2;
-                border: 1px solid #19d8d2;
             }
             QWidget#PadBoard QPushButton#PadPowerButton[armed="true"]:hover {
                 color: #ffffff;
                 border-color: #7dfcf6;
             }
             QWidget#PadBoard QPushButton#PadPowerButton[armed="false"] {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #121b26,
-                    stop:1 #071019);
+                __BUTTON_OFF_SKIN__
                 color: #6f8195;
-                border: 1px solid #27384a;
             }
             QWidget#PadBoard QPushButton#PadPowerButton[armed="false"]:hover {
                 color: #9fb3c8;
@@ -497,10 +577,7 @@ class PadsPage(QWidget):
                 color: #b8c4d3;
             }
             QWidget#PadSetNav {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #111f2c, stop:1 #07111b);
-                border: 1px solid #2d465b;
-                border-radius: 16px;
+                __NAV_SKIN__
             }
             QWidget#PadSetNav QPushButton {
                 background: #07111b;
@@ -520,14 +597,21 @@ class PadsPage(QWidget):
                 font-size: 20px;
             }
             """
+            .replace("__EFFECTS_HOLDER_SKIN__", effects_holder_skin)
+            .replace("__BOARD_SKIN__", board_skin)
+            .replace("__NAV_SKIN__", nav_skin)
+            .replace("__NOTE_PAD_SKIN__", note_pad_skin)
+            .replace("__BUTTON_ON_SKIN__", button_on_skin)
+            .replace("__BUTTON_OFF_SKIN__", button_off_skin)
+            .replace("__BUTTON_SECONDARY_SKIN__", button_secondary_skin)
         )
 
     def _set_effects_visible(self, expanded: bool, *, init: bool = False) -> None:
         self.effects_container.setVisible(expanded)
         if expanded:
             self.effects_toggle.setText("✣  EFECTOS")
-            self.effects_holder.setMinimumWidth(340)
-            self.effects_holder.setMaximumWidth(420)
+            self.effects_holder.setMinimumWidth(360)
+            self.effects_holder.setMaximumWidth(390)
         else:
             self.effects_toggle.setText(f"{chr(0x25B6)}")
             width = max(58, self.effects_toggle.sizeHint().width() + 18)
@@ -730,6 +814,22 @@ class PadsPage(QWidget):
         self.set_label.setText(f"{self.active_set + 1}/{len(self.note_sets)}")
         for pad_idx in range(PAD_COUNT):
             self._sync_pad_visual_state(pad_idx)
+        self._apply_preview_visual_state()
+
+    def _apply_preview_visual_state(self) -> None:
+        if not self.ui_preview_mode:
+            return
+
+        demo_levels = [20, 44, 86, 38, 60]
+        demo_noise = [0, 2, 5, 11, 10]
+
+        for pad_idx in range(PAD_COUNT):
+            self.pad_connected[pad_idx] = True
+            self.pad_noise[pad_idx] = demo_noise[pad_idx]
+            self._sync_pad_visual_state(pad_idx)
+
+        for idx, vu in enumerate(self.vus):
+            vu.actualizar(demo_levels[idx])
 
     def _change_set(self, delta: int) -> None:
         self.active_set = (self.active_set + delta) % len(self.note_sets)

@@ -89,16 +89,16 @@ class AppChrome(QWidget):
             int(rect.bottom()),
         )
 
-        painter.setPen(QPen(QColor(0, 224, 209, 60), 1))
-        painter.drawLine(32, 1, int(rect.right() - 32), 1)
+        painter.setPen(QPen(QColor(0, 224, 209, 55), 1))
+        painter.drawLine(24, 1, int(rect.right() - 24), 1)
 
         panel = QPainterPath()
         width = rect.width()
         height = rect.height()
-        panel.moveTo(width - 230, 0)
+        panel.moveTo(width - 250, 0)
         panel.lineTo(width, 0)
         panel.lineTo(width, height)
-        panel.lineTo(width - 270, height)
+        panel.lineTo(width - 290, height)
         panel.closeSubpath()
 
         panel_bg = QLinearGradient(0, 0, 0, height)
