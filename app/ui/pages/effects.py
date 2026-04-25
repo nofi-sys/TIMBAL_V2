@@ -8,7 +8,7 @@ from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (
     QWidget,
     QVBoxLayout,
-    QGroupBox,
+    QFrame,
     QCheckBox,
     QSlider,
     QLabel,
@@ -20,6 +20,21 @@ from PyQt5.QtWidgets import (
 
 from app.ui.pages.effects_presets import get_reverb_preset
 from app.state.settings import load_config, save_config
+
+
+def make_card(title: str) -> tuple[QFrame, QVBoxLayout]:
+    card = QFrame()
+    card.setObjectName("TechCard")
+
+    layout = QVBoxLayout(card)
+    layout.setContentsMargins(18, 16, 18, 16)
+    layout.setSpacing(10)
+
+    header = QLabel(title)
+    header.setObjectName("TechCardTitle")
+    layout.addWidget(header)
+
+    return card, layout
 
 
 class EffectsPage(QWidget):
@@ -42,16 +57,22 @@ class EffectsPage(QWidget):
                 color: #cfe2ef;
                 font-size: 12px;
             }
-            QWidget#EffectsPage QLabel#EffectsTitle {
-                color: #19d8d2;
-                font-size: 16px;
+            QFrame#TechCard {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #132235,
+                    stop:0.52 #091522,
+                    stop:1 #050b12);
+                border: 1px solid #33495f;
+                border-radius: 14px;
+            }
+            QFrame#TechCard:hover {
+                border-color: #4f6d86;
+            }
+            QLabel#TechCardTitle {
+                color: #e8f4fb;
+                font-size: 14px;
                 font-weight: 800;
                 padding: 0 0 2px 0;
-            }
-            QWidget#EffectsPage QGroupBox {
-                color: #dbe8f1;
-                font-size: 13px;
-                font-weight: 800;
             }
             QWidget#EffectsPage QCheckBox {
                 color: #dbe8f1;
@@ -74,10 +95,7 @@ class EffectsPage(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(8)
 
-        reverb_box = QGroupBox("REVERB")
-        rev_layout = QVBoxLayout()
-        rev_layout.setContentsMargins(10, 10, 10, 10)
-        rev_layout.setSpacing(8)
+        reverb_box, rev_layout = make_card("REVERB")
 
         self.chk_rev_on = QCheckBox("Reverb ON")
         self.chk_rev_on.setChecked(True)
@@ -116,13 +134,9 @@ class EffectsPage(QWidget):
             presets_row.addWidget(btn)
         rev_layout.addLayout(presets_row)
 
-        reverb_box.setLayout(rev_layout)
         layout.addWidget(reverb_box)
 
-        dynamics_box = QGroupBox("DINÁMICA")
-        dyn_layout = QVBoxLayout()
-        dyn_layout.setContentsMargins(10, 10, 10, 10)
-        dyn_layout.setSpacing(8)
+        dynamics_box, dyn_layout = make_card("DINAMICA")
 
         self.lbl_bright = QLabel()
         self.sld_bright = QSlider(Qt.Horizontal)
@@ -178,9 +192,7 @@ class EffectsPage(QWidget):
         dyn_layout.addWidget(self.lbl_gate)
         dyn_layout.addWidget(self.sld_gate)
         # Calibración por parche (extra de velocidad por canal 0-4).
-        calib_box = QGroupBox("CALIBRACIÓN PARCHES")
-        calib_layout = QVBoxLayout()
-        calib_layout.setContentsMargins(8, 8, 8, 8)
+        calib_box, calib_layout = make_card("CALIBRACION PARCHES")
         self.pad_calib_sliders = []
         calib_row = QHBoxLayout()
         calib_row.setSpacing(14)
@@ -204,22 +216,16 @@ class EffectsPage(QWidget):
             col.addWidget(sld)
             calib_row.addLayout(col)
         calib_layout.addLayout(calib_row)
-        calib_box.setLayout(calib_layout)
         dyn_layout.addWidget(calib_box)
 
-        dynamics_box.setLayout(dyn_layout)
         layout.addWidget(dynamics_box)
 
-        config_box = QGroupBox("CONFIGURACIÓN")
-        cfg_layout = QVBoxLayout()
-        cfg_layout.setContentsMargins(10, 10, 10, 10)
-        cfg_layout.setSpacing(8)
+        config_box, cfg_layout = make_card("CONFIGURACION")
         self.lbl_sf = QLabel(self._current_sf_text())
         self.btn_sf = QPushButton("Seleccionar SoundFont")
         self.btn_sf.clicked.connect(self._select_sf2)
         cfg_layout.addWidget(self.lbl_sf)
         cfg_layout.addWidget(self.btn_sf, alignment=Qt.AlignLeft)
-        config_box.setLayout(cfg_layout)
         layout.addWidget(config_box)
         layout.addStretch(1)
 

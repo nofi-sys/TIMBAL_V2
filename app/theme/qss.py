@@ -116,13 +116,21 @@ QSlider::sub-page:horizontal {{
     background: #19d8d2;
     border-radius: 2px;
 }}
+QSlider::add-page:horizontal {{
+    background: #26384d;
+    border-radius: 2px;
+}}
 QSlider::handle:horizontal {{
-    width: 13px;
-    height: 13px;
-    background: #d8edf4;
-    border: 2px solid #2c89a1;
+    width: 15px;
+    height: 15px;
+    background: #d9fbff;
+    border: 2px solid #6dfcf4;
     border-radius: 7px;
     margin: -6px 0;
+}}
+QSlider::handle:horizontal:hover {{
+    background: #ffffff;
+    border-color: #19d8d2;
 }}
 QSlider::groove:vertical {{
     width: 5px;
@@ -131,6 +139,10 @@ QSlider::groove:vertical {{
 }}
 QSlider::sub-page:vertical {{
     background: #19d8d2;
+    border-radius: 2px;
+}}
+QSlider::add-page:vertical {{
+    background: #26384d;
     border-radius: 2px;
 }}
 QSlider::handle:vertical {{

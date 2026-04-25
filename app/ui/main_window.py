@@ -3,7 +3,8 @@ import subprocess
 from pathlib import Path
 
 from mido import Message
-from PyQt5.QtCore import QPoint, Qt, QTimer
+from PyQt5.QtCore import QPoint, QRectF, Qt, QTimer
+from PyQt5.QtGui import QColor, QLinearGradient, QPainter, QPainterPath, QPen
 from PyQt5.QtWidgets import (
     QMainWindow,
     QFileDialog,
@@ -67,8 +68,46 @@ class AppChrome(QWidget):
         super().__init__(window)
         self.window = window
         self.setObjectName("AppChrome")
-        self.setFixedHeight(58)
+        self.setFixedHeight(66)
         self._drag_pos: QPoint | None = None
+
+    def paintEvent(self, event) -> None:
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+
+        rect = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
+        bg = QLinearGradient(rect.topLeft(), rect.bottomLeft())
+        bg.setColorAt(0.0, QColor("#0c1724"))
+        bg.setColorAt(1.0, QColor("#050b12"))
+        painter.fillRect(rect, bg)
+
+        painter.setPen(QPen(QColor("#20354a"), 1))
+        painter.drawLine(
+            int(rect.left()),
+            int(rect.bottom()),
+            int(rect.right()),
+            int(rect.bottom()),
+        )
+
+        painter.setPen(QPen(QColor(0, 224, 209, 60), 1))
+        painter.drawLine(32, 1, int(rect.right() - 32), 1)
+
+        panel = QPainterPath()
+        width = rect.width()
+        height = rect.height()
+        panel.moveTo(width - 230, 0)
+        panel.lineTo(width, 0)
+        panel.lineTo(width, height)
+        panel.lineTo(width - 270, height)
+        panel.closeSubpath()
+
+        panel_bg = QLinearGradient(0, 0, 0, height)
+        panel_bg.setColorAt(0.0, QColor("#0a1320"))
+        panel_bg.setColorAt(1.0, QColor("#050910"))
+        painter.fillPath(panel, panel_bg)
+
+        painter.setPen(QPen(QColor("#28435a"), 1))
+        painter.drawPath(panel)
 
     def mousePressEvent(self, event) -> None:
         if event.button() == Qt.LeftButton:

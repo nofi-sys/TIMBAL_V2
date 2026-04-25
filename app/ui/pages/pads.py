@@ -3,7 +3,8 @@ from __future__ import annotations
 
 from typing import List
 
-from PyQt5.QtCore import Qt, QTimer
+from PyQt5.QtCore import QRectF, Qt, QTimer
+from PyQt5.QtGui import QColor, QLinearGradient, QPainter, QPainterPath, QPen
 from PyQt5.QtWidgets import (
     QGridLayout,
     QHBoxLayout,
@@ -41,67 +42,114 @@ DEFAULT_PAD_ENABLED: List[bool] = [True for _ in range(PAD_COUNT)]
 
 
 class Vu(QWidget):
+    SEGMENTS = 26
+
     def __init__(self) -> None:
         super().__init__()
         self.setObjectName("VuMeter")
-        self.setMinimumSize(130, 310)
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(18, 20, 18, 20)
-        layout.setSpacing(4)
-        self.bars: List[QLabel] = []
-        for _ in range(21):
-            bar = QLabel()
-            bar.setFixedHeight(12)
-            bar.setStyleSheet(self._bar_style("#121d29", "#25364a"))
-            layout.addWidget(bar)
-            self.bars.append(bar)
-        layout.addStretch(1)
+        self.setMinimumSize(130, 340)
         self.level = 0
         self._enabled = True
+
         self.timer = QTimer(self)
-        self.timer.setInterval(60)
+        self.timer.setInterval(45)
         self.timer.timeout.connect(self._tick)
         self.timer.start()
 
     def actualizar(self, value: int) -> None:
         if not self._enabled:
             self.level = 0
+            self.update()
             return
-        self.level = max(self.level, int(value))
+        self.level = max(self.level, int(max(0, min(127, value))))
+        self.update()
 
     def set_enabled(self, enabled: bool) -> None:
         self._enabled = bool(enabled)
         if not self._enabled:
             self.level = 0
-        self._paint()
-
-    def _paint(self) -> None:
-        if not self._enabled:
-            for bar in self.bars:
-                bar.setStyleSheet(self._bar_style("#07111b", "#162433"))
-            return
-
-        active = self.level // 9
-        for idx, bar in enumerate(reversed(self.bars)):
-            if idx < active:
-                bar.setStyleSheet(self._bar_style("#19d8d2", "#2cf7ee"))
-            else:
-                bar.setStyleSheet(self._bar_style("#121d29", "#25364a"))
-
-    def _bar_style(self, color: str, border: str) -> str:
-        return (
-            f"background:{color};"
-            f"border:1px solid {border};"
-            "border-radius:3px;"
-        )
+        self.update()
 
     def _tick(self) -> None:
         if not self._enabled:
             self.level = 0
-            self._paint()
-            return
-        self.level = max(0, self.level - 6)
-        self._paint()
+        else:
+            self.level = max(0, self.level - 5)
+        self.update()
+
+    def paintEvent(self, event) -> None:
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+
+        outer = QRectF(self.rect()).adjusted(1, 1, -1, -1)
+        outer_path = QPainterPath()
+        outer_path.addRoundedRect(outer, 22, 22)
+
+        bg = QLinearGradient(outer.topLeft(), outer.bottomLeft())
+        bg.setColorAt(0.0, QColor("#132438"))
+        bg.setColorAt(0.18, QColor("#091522"))
+        bg.setColorAt(1.0, QColor("#040a11"))
+        painter.fillPath(outer_path, bg)
+
+        painter.setPen(QPen(QColor("#314b63"), 1.2))
+        painter.drawPath(outer_path)
+
+        painter.setPen(QPen(QColor(140, 190, 230, 70), 1))
+        painter.drawLine(
+            int(outer.left() + 18),
+            int(outer.top() + 8),
+            int(outer.right() - 18),
+            int(outer.top() + 8),
+        )
+
+        slot = outer.adjusted(18, 18, -18, -18)
+        slot_path = QPainterPath()
+        slot_path.addRoundedRect(slot, 14, 14)
+
+        slot_bg = QLinearGradient(slot.topLeft(), slot.bottomLeft())
+        slot_bg.setColorAt(0.0, QColor("#070d14"))
+        slot_bg.setColorAt(1.0, QColor("#02060a"))
+        painter.fillPath(slot_path, slot_bg)
+
+        painter.setPen(QPen(QColor("#172536"), 1))
+        painter.drawPath(slot_path)
+
+        active = 0
+        if self._enabled:
+            active = int(round((self.level / 127.0) * self.SEGMENTS))
+            active = max(0, min(self.SEGMENTS, active))
+
+        gap = 4.0
+        side_pad = 8.0
+        total_gap = gap * (self.SEGMENTS - 1)
+        seg_h = max(5.0, (slot.height() - 22 - total_gap) / self.SEGMENTS)
+        seg_w = slot.width() - side_pad * 2
+        bottom = slot.bottom() - 12
+
+        for i in range(self.SEGMENTS):
+            y = bottom - (i + 1) * seg_h - i * gap
+            rect = QRectF(slot.left() + side_pad, y, seg_w, seg_h)
+            is_on = i < active and self._enabled
+
+            if is_on:
+                segment_bg = QLinearGradient(rect.topLeft(), rect.bottomLeft())
+                segment_bg.setColorAt(0.0, QColor("#25f3eb"))
+                segment_bg.setColorAt(1.0, QColor("#0aa6a6"))
+                painter.setPen(QPen(QColor("#35fff6"), 0.8))
+                painter.setBrush(segment_bg)
+            else:
+                off = QColor("#121922") if self._enabled else QColor("#070b10")
+                border = QColor("#243241") if self._enabled else QColor("#121923")
+                painter.setPen(QPen(border, 0.8))
+                painter.setBrush(off)
+
+            painter.drawRoundedRect(rect, 3, 3)
+
+        if active > 0 and self._enabled:
+            glow = QRectF(slot.left() + 8, slot.bottom() - 34, slot.width() - 16, 28)
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(QColor(0, 224, 209, 35))
+            painter.drawRoundedRect(glow, 10, 10)
 
 
 class PadsPage(QWidget):
@@ -129,18 +177,17 @@ class PadsPage(QWidget):
             self._save_config()
 
         wrapper = QHBoxLayout(self)
-        wrapper.setContentsMargins(0, 0, 0, 0)
+        wrapper.setContentsMargins(24, 18, 24, 24)
         wrapper.setSpacing(0)
-        wrapper.addStretch(1)
 
         container = QWidget()
         container.setObjectName("PadsContent")
         container.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        container.setMinimumWidth(1280)
-        container.setMaximumWidth(1680)
+        container.setMinimumWidth(1180)
+        container.setMaximumWidth(16777215)
         main = QHBoxLayout(container)
-        main.setContentsMargins(18, 18, 18, 18)
-        main.setSpacing(20)
+        main.setContentsMargins(0, 0, 0, 0)
+        main.setSpacing(24)
 
         effects_collapsed = bool(self.config.get(self._config_key, False))
         self.effects_widget = EffectsPage(engine, self.config)
@@ -297,8 +344,7 @@ class PadsPage(QWidget):
         main.addWidget(board, 1)
         main.addWidget(nav_widget, 0, Qt.AlignVCenter)
 
-        wrapper.addWidget(container)
-        wrapper.addStretch(1)
+        wrapper.addWidget(container, 1)
 
         self._apply_styles()
         self._set_effects_visible(not effects_collapsed, init=True)
@@ -402,12 +448,15 @@ class PadsPage(QWidget):
                 border-color: #7dfcf6;
             }
             QWidget#PadBoard QPushButton#PadPowerButton[armed="false"] {
-                background-color: #3f1d1d;
-                color: #fecaca;
-                border: 1px solid #991b1b;
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #121b26,
+                    stop:1 #071019);
+                color: #6f8195;
+                border: 1px solid #27384a;
             }
             QWidget#PadBoard QPushButton#PadPowerButton[armed="false"]:hover {
-                background-color: #4c1d1d;
+                color: #9fb3c8;
+                border-color: #3b536a;
             }
             QWidget#PadBoard QLabel#PadPresenceLabel {
                 background: #07111b;
